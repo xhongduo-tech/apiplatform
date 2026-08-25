@@ -17,8 +17,8 @@ jobs:
     name: Require successful Community CI
     runs-on: ubuntu-latest
     permissions:
-      actions: read
-      checks: read
+      actions: read # Query the exact CI workflow run and attempt.
+      checks: read # Bind each CI job to its GitHub-authored check run.
       contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -47,9 +47,44 @@ jobs:
           fi
       - name: Require every release-critical CI check on this commit
         env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+          runs="$(gh api --method GET \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f branch="$DEFAULT_BRANCH" \
+            -f event=push \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=success \
+            -F per_page=100)"
+          run_identity="$(jq -r \
+            --arg branch "$DEFAULT_BRANCH" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sha "$GITHUB_SHA" '
+              [.workflow_runs[] | select(
+                .event == "push" and
+                .head_branch == $branch and
+                .head_sha == $sha and
+                .path == ".github/workflows/ci.yml" and
+                .repository.full_name == $repository and
+                .status == "completed" and
+                .conclusion == "success"
+              )]
+              | sort_by(.created_at, .run_attempt) | last
+              | if . == null then "missing" else [.id, .run_attempt] | @tsv end
+            ' <<<"$runs")"
+          if [[ "$run_identity" == "missing" ]]; then
+            echo "::error::no successful push run of .github/workflows/ci.yml on ${DEFAULT_BRANCH} has head SHA ${GITHUB_SHA}"
+            exit 1
+          fi
+          IFS=$'\t' read -r run_id run_attempt <<<"$run_identity"
+
+          jobs="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${run_attempt}/jobs?per_page=100")"
           checks="$(gh api \
             -H 'Accept: application/vnd.github+json' \
             "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100")"
@@ -62,25 +97,51 @@ jobs:
             "Container security"
           )
           for check_name in "${required_checks[@]}"; do
-            conclusion="$(jq -r --arg name "$check_name" '
-              [.check_runs[] | select(.name == $name)]
-              | sort_by(.started_at // "") | last | .conclusion // "missing"
+            job_url="$(jq -r \
+              --arg name "$check_name" \
+              --arg sha "$GITHUB_SHA" \
+              --argjson attempt "$run_attempt" \
+              --argjson run_id "$run_id" '
+                [.jobs[] | select(
+                  .name == $name and
+                  .run_id == $run_id and
+                  .run_attempt == $attempt and
+                  .head_sha == $sha and
+                  .status == "completed" and
+                  .conclusion == "success"
+                )]
+                | if length == 1 then .[0].html_url else "missing-or-ambiguous" end
+              ' <<<"$jobs")"
+            if [[ "$job_url" == "missing-or-ambiguous" ]]; then
+              echo "::error::required CI job '$check_name' is not uniquely successful in run ${run_id}, attempt ${run_attempt}"
+              exit 1
+            fi
+            conclusion="$(jq -r \
+              --arg job_url "$job_url" \
+              --arg name "$check_name" '
+              [.check_runs[] | select(
+                .name == $name and
+                .app.slug == "github-actions" and
+                .details_url == $job_url
+              )]
+              | if length == 1 then .[0].conclusion // "missing" else "ambiguous" end
             ' <<<"$checks")"
             if [[ "$conclusion" != "success" ]]; then
-              echo "::error::required CI check '$check_name' is '$conclusion' for ${GITHUB_SHA}"
+              echo "::error::required CI check '$check_name' from GitHub Actions run ${run_id} is '$conclusion' for ${GITHUB_SHA}"
               exit 1
             fi
           done
+          echo "Verified Community CI run ${run_id}, attempt ${run_attempt}, on ${DEFAULT_BRANCH} at ${GITHUB_SHA}."
 
   signed-images:
     name: Versioned images, SBOM and signatures
     runs-on: ubuntu-latest
     needs: verified-main-ci
     permissions:
-      actions: read
-      contents: write
-      id-token: write
-      packages: write
+      actions: read # Allow release artifact metadata operations.
+      contents: write # Create and publish the immutable GitHub Release.
+      id-token: write # Obtain a short-lived OIDC identity for Cosign.
+      packages: write # Push the versioned Community container images.
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -228,11 +289,95 @@ jobs:
           path: release/
           if-no-files-found: error
           retention-days: 90
-      - name: Publish GitHub Release and verified assets
+      - name: Publish a resumable verified GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" release/*
-          --verify-tag
-          --title "Open API Platform ${RELEASE_VERSION}"
-          --generate-notes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          assets=(release/*)
+          if (( ${#assets[@]} == 0 )); then
+            echo "::error::release bundle is empty"
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            if [[ ! -f "$asset" ]]; then
+              echo "::error::release bundle contains a non-file entry: ${asset}"
+              exit 1
+            fi
+          done
+
+          expected_assets='[]'
+          for asset in "${assets[@]}"; do
+            name="${asset##*/}"
+            digest="sha256:$(sha256sum "$asset" | awk '{print $1}')"
+            size="$(stat -c '%s' "$asset")"
+            expected_assets="$(jq -c \
+              --arg digest "$digest" \
+              --arg name "$name" \
+              --argjson size "$size" \
+              '. + [{name: $name, digest: $digest, size: $size}] | sort_by(.name)' \
+              <<<"$expected_assets")"
+          done
+
+          release_assets_match() {
+            jq -e --argjson expected "$expected_assets" '
+              ([.assets[] | select(.state == "uploaded") |
+                {name: .name, digest: .digest, size: .size}] | sort_by(.name)) == $expected
+            ' >/dev/null
+          }
+
+          if release_json="$(gh release view "$GITHUB_REF_NAME" \
+            --json assets,isDraft,isImmutable,tagName 2>/dev/null)"; then
+            if [[ "$(jq -r '.tagName' <<<"$release_json")" != "$GITHUB_REF_NAME" ]]; then
+              echo "::error::existing release does not match tag ${GITHUB_REF_NAME}"
+              exit 1
+            fi
+            if [[ "$(jq -r '.isDraft' <<<"$release_json")" == "false" ]]; then
+              if ! release_assets_match <<<"$release_json"; then
+                echo "::error::published release ${GITHUB_REF_NAME} exists but its assets differ from this verified bundle"
+                exit 1
+              fi
+              if [[ "$(jq -r '.isImmutable' <<<"$release_json")" != "true" ]]; then
+                echo "::error::published release ${GITHUB_REF_NAME} is not immutable"
+                echo "::error::Delete this non-immutable release, have a repository administrator enable immutable releases, then rerun the release workflow."
+                exit 1
+              fi
+              echo "Release ${GITHUB_REF_NAME} is already published with the verified assets."
+              exit 0
+            fi
+            echo "Resuming existing draft release ${GITHUB_REF_NAME}."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --draft \
+              --title "Open API Platform ${RELEASE_VERSION}" \
+              --generate-notes
+          fi
+
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          release_json="$(gh release view "$GITHUB_REF_NAME" \
+            --json assets,isDraft,isImmutable,tagName)"
+          if [[ "$(jq -r '.isDraft' <<<"$release_json")" != "true" ]] || \
+             ! release_assets_match <<<"$release_json"; then
+            echo "::error::draft release asset names, sizes, or SHA-256 digests do not match the verified bundle"
+            jq -c '[.assets[] | {name, digest, size, state}] | sort_by(.name)' <<<"$release_json"
+            exit 1
+          fi
+
+          gh release edit "$GITHUB_REF_NAME" --verify-tag --draft=false
+          for _ in 1 2 3 4 5; do
+            release_json="$(gh release view "$GITHUB_REF_NAME" \
+              --json assets,isDraft,isImmutable,tagName)"
+            if [[ "$(jq -r '.isDraft' <<<"$release_json")" == "false" ]] && \
+               [[ "$(jq -r '.isImmutable' <<<"$release_json")" == "true" ]] && \
+               release_assets_match <<<"$release_json"; then
+              echo "Published immutable release ${GITHUB_REF_NAME} after exact asset digest verification."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::published release failed final asset or immutability verification"
+          echo "::error::If isImmutable is false, delete this release, have an administrator enable immutable releases, and rerun the workflow."
+          exit 1

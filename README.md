@@ -9,6 +9,7 @@ credentials, usage analytics, traffic governance, and platform operations under
 your control.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-2563EB?style=flat-square)](LICENSE)
+[![CI](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
@@ -435,7 +436,10 @@ already succeeded. `.github/workflows/release.yml` verifies those checks and
 version/changelog identity, scans images before publication, publishes versioned
 GHCR images, verifies that both packages are public and linked to this repository,
 keyless-signs their immutable digests, attaches SPDX SBOM attestations, and
-creates a GitHub Release containing the checksummed source bundle. A personal
+creates or resumes a draft GitHub Release, verifies every asset digest, and only
+then publishes it. The workflow also fails closed unless GitHub marks the
+published release immutable; a repository administrator must enable immutable
+releases before the tag is created. A personal
 account's first GHCR publication pauses before release creation until the owner
 changes both new packages from their default private visibility to **Public**;
 rerunning that failed job then completes the release.

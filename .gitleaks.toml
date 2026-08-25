@@ -2,14 +2,46 @@
 useDefault = true
 
 [[allowlists]]
-description = "Clearly synthetic credentials used in tests and public examples"
-regexTarget = "match"
-regexes = [
-  '''AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8''',
-  '''compose-validation-jwt-secret-at-least-32-characters''',
-  '''e2e-jwt-secret-release-check-at-least-32-characters''',
-  '''sk-demo-1234567890''',
-  '''sk-plain-1234567890''',
-  '''YOUR_API_KEY''',
-  '''keys\.min10CharsHint''',
+description = "Exact synthetic CI-only secrets"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = [
+  '''^\.github/workflows/ci\.yml$''',
+  '''^scripts/run-e2e\.sh$''',
 ]
+regexes = [
+  '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
+  '''^compose-validation-jwt-secret-at-least-32-characters$''',
+  '''^e2e-jwt-secret-release-check-at-least-32-characters$''',
+]
+
+[[allowlists]]
+description = "Exact synthetic secrets in security tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = [
+  '''^backend/tests/test_runtime_config\.py$''',
+  '''^backend/tests/test_security_hardening\.py$''',
+]
+regexes = [
+  '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
+  '''^sk-plain-1234567890$''',
+]
+
+[[allowlists]]
+description = "Translation key mistaken for a generic API key"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^frontend/src/app/i18n/en\.ts$''']
+regexes = ['''^keys\.min10CharsHint$''']
+
+[[allowlists]]
+description = "Exact API-key placeholder in public curl examples"
+condition = "AND"
+targetRules = ["curl-auth-header"]
+paths = [
+  '''^README\.md$''',
+  '''^README\.zh-CN\.md$''',
+  '''^frontend/src/app/components/docs/scenario-data\.ts$''',
+]
+regexes = ['''^YOUR_API_KEY$''']

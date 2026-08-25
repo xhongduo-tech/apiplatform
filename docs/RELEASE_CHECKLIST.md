@@ -38,6 +38,10 @@ deleted from the current checkout. Complete every item below for each release.
 - [ ] Mobile navigation, keyboard operation and contrast are checked.
 - [ ] Images are built reproducibly, scanned, accompanied by an SBOM and signed.
 - [ ] `CHANGELOG.md`, support window and upgrade notes are complete.
+- [ ] Before creating the release tag, a repository administrator has confirmed
+      that immutable releases are enabled in repository settings, or with
+      `gh api repos/xhongduo-tech/apiplatform/immutable-releases --jq '.enabled'` returning
+      `true`. This administrator-only check cannot be delegated to `GITHUB_TOKEN`.
 - [ ] Both GHCR packages are linked to this repository and have `public`
       visibility, so the documented Docker deployment works anonymously.
 
@@ -48,3 +52,9 @@ creates a GitHub Release. Open each new package's settings, confirm the source
 repository link, change its visibility to **Public**, and rerun the failed job.
 This visibility change cannot be reversed. Later releases reuse the already
 public packages and pass the gate automatically.
+
+The release workflow creates or resumes a draft, uploads and verifies every
+asset's name, size and SHA-256 digest, then publishes it. It fails closed unless
+GitHub reports the published release as immutable. Enabling immutability later
+does not retrofit an existing release: delete a non-immutable failed release,
+enable the repository setting, and rerun the release workflow.

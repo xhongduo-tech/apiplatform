@@ -221,7 +221,7 @@ const RULES_EN: Segment[][] = [
   [
     { text: "Users must " },
     { text: "properly safeguard", red: true },
-    { text: " their unified authentication credentials. Any API abuse caused by account theft or sharing shall be " },
+    { text: " their platform account credentials. Any API abuse caused by account theft or sharing shall be " },
     { text: "the responsibility of the account holder", red: true },
     { text: "." },
   ],

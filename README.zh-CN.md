@@ -8,6 +8,7 @@
 用量分析、流量治理与平台运营。
 
 [![许可证：Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-2563EB?style=flat-square)](LICENSE)
+[![CI](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
@@ -395,9 +396,13 @@ bash scripts/check-public-release.sh
 
 发布检查会扫描当前文件与 Git 历史中的凭据、数据库导出、旧组织标识、内部资料
 和本地生成文件。`VERSION` 是唯一发行版本源；`v<版本号>` 标签必须指向六项发布
-关键 CI 均已成功的提交。`.github/workflows/release.yml` 会复核这些检查与版本/变更
-记录，发布前扫描镜像，随后发布带版本的 GHCR 镜像，对不可变摘要执行无密钥签名、
-附加 SPDX SBOM 证明，并创建包含校验和源码包的 GitHub Release。
+关键 CI 均已成功的提交。`.github/workflows/release.yml` 会把检查绑定到默认分支上精确的
+push workflow run 与提交，复核版本/变更记录并在发布前扫描镜像；随后发布带版本的 GHCR
+镜像、验证镜像包已公开且与仓库关联、对不可变摘要执行无密钥签名，并附加 SPDX SBOM
+证明。GitHub Release 采用可恢复的草稿流程，逐项核对资产名称、大小与 SHA-256 后才发布，
+且最终必须由 GitHub 标记为不可变。仓库管理员必须在创建 Tag 前启用不可变 Release。
+个人账户首次发布的 GHCR 包默认为私有，因此工作流会在签名和 Release 创建前暂停；管理员
+将两个包改为 **Public** 后，重新运行失败作业即可继续。
 
 ## 项目文档
 
@@ -437,6 +442,6 @@ docs/       架构与运维文档
 
 ## 许可证
 
-Copyright 2026 Open API Platform contributors.
+Copyright 2026 徐鸿铎 and Open API Platform contributors.
 
 本项目采用 [Apache License 2.0](LICENSE)，归属信息见 [NOTICE](NOTICE)。
