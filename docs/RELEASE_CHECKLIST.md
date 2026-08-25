@@ -38,6 +38,12 @@ deleted from the current checkout. Complete every item below for each release.
 - [ ] Mobile navigation, keyboard operation and contrast are checked.
 - [ ] Images are built reproducibly, scanned, accompanied by an SBOM and signed.
 - [ ] `CHANGELOG.md`, support window and upgrade notes are complete.
+- [ ] Create `v<version>` as an annotated, signed tag whose tagger identity is
+      exactly `徐鸿铎 <x.hongduo@hotmail.com>`, and push the tag only after its
+      signing public key is registered with GitHub. The tag object must point
+      directly to the release commit (not another tag). GitHub REST must report
+      `verification.verified=true` and `verification.reason=valid`; lightweight,
+      unsigned, indirectly targeted or differently attributed tags fail closed.
 - [ ] Before creating the release tag, a repository administrator has confirmed
       that immutable releases are enabled in repository settings, or with
       `gh api repos/xhongduo-tech/apiplatform/immutable-releases --jq '.enabled'` returning

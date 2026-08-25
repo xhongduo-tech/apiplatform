@@ -395,9 +395,12 @@ bash scripts/check-public-release.sh
 ```
 
 发布检查会扫描当前文件与 Git 历史中的凭据、数据库导出、旧组织标识、内部资料
-和本地生成文件。`VERSION` 是唯一发行版本源；`v<版本号>` 标签必须指向六项发布
-关键 CI 均已成功的提交。`.github/workflows/release.yml` 会把检查绑定到默认分支上精确的
-push workflow run 与提交，复核版本/变更记录并在发布前扫描镜像；随后发布带版本的 GHCR
+和本地生成文件。`VERSION` 是唯一发行版本源；`v<版本号>` 必须是由
+`徐鸿铎 <x.hongduo@hotmail.com>` 签署、直接指向发行提交的 annotated tag，且 GitHub
+必须返回 `verification.verified=true`、原因为 `valid`。该提交的六项发布关键 CI 也必须
+已经成功。`.github/workflows/release.yml` 会在 checkout 前通过 GitHub REST API 验证上述
+身份，再把检查绑定到默认分支上精确的 push workflow run 与提交，复核版本/变更记录并在
+发布前扫描镜像；随后发布带版本的 GHCR
 镜像、验证镜像包已公开且与仓库关联、对不可变摘要执行无密钥签名，并附加 SPDX SBOM
 证明。GitHub Release 采用可恢复的草稿流程，逐项核对资产名称、大小与 SHA-256 后才发布，
 且最终必须由 GitHub 标记为不可变。仓库管理员必须在创建 Tag 前启用不可变 Release。

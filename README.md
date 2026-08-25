@@ -431,11 +431,14 @@ bash scripts/check-public-release.sh
 The release check scans the current tree and Git history for credentials,
 database exports, former organization identifiers, internal artifacts, and
 generated local files. `VERSION` is the single release version source. A
-`v<version>` tag must point at a commit whose six release-critical CI jobs have
-already succeeded. `.github/workflows/release.yml` verifies those checks and
-version/changelog identity, scans images before publication, publishes versioned
-GHCR images, verifies that both packages are public and linked to this repository,
-keyless-signs their immutable digests, attaches SPDX SBOM attestations, and
+`v<version>` tag must be an annotated tag signed by
+`徐鸿铎 <x.hongduo@hotmail.com>`, point directly at the release commit, and have
+GitHub report `verification.verified=true` with reason `valid`. The commit's six
+release-critical CI jobs must already have succeeded. `.github/workflows/release.yml`
+checks that identity through the GitHub REST API before checkout, then verifies
+the CI checks and version/changelog identity, scans images before publication,
+publishes versioned GHCR images, verifies that both packages are public and linked
+to this repository, keyless-signs their immutable digests, attaches SPDX SBOM attestations, and
 creates or resumes a draft GitHub Release, verifies every asset digest, and only
 then publishes it. The workflow also fails closed unless GitHub marks the
 published release immutable; a repository administrator must enable immutable
