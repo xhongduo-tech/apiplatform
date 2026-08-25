@@ -1,0 +1,42 @@
+# 镜像构建上下文排除项。
+# nginx 镜像以仓库根为上下文（docker build -f nginx/Dockerfile .），不排除的话
+# 整个仓库都会打进 daemon，既慢又容易把不该进镜像的东西带进去。
+
+offline-images/
+offline-wheels/
+
+# Secrets and runtime data must never be sent to BuildKit (including remote
+# builders), even when no Dockerfile currently COPYs them.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/*.dump
+**/*.backup
+**/*.sql
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.log
+/logs/
+
+.git/
+.github/
+.dev-logs/
+.claude/
+
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.tsbuildinfo
+
+# 本地产物：镜像里由 npm run build 重新生成，带进去只会造成"改了没生效"的错觉
+frontend/dist/
+
+.DS_Store

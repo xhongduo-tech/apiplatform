@@ -1,0 +1,175 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  release-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 开源发布卫生检查
+        run: bash scripts/check-public-release.sh
+      - name: Git history secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Python dependency audit
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r backend/requirements.txt
+      - name: Frontend production dependency audit
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+
+  backend:
+    runs-on: ubuntu-latest
+    # 绝大多数用例是纯逻辑单测；论坛等少数集成用例要查真库，由这里的 service
+    # 提供（不可达时 conftest 的 requires_db 会 skip，不会伪装成失败）。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: platform_ci_postgres
+          POSTGRES_DB: openapi_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U platform -d openapi_platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装依赖
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: 语法检查
+        working-directory: backend
+        run: python -m py_compile $(find app -name "*.py")
+      - name: Lint (ruff)
+        working-directory: backend
+        run: python -m ruff check app tests ../scripts
+      - name: 空库迁移到 head
+        working-directory: backend
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql+psycopg://platform:platform_ci_postgres@127.0.0.1:5432/openapi_platform
+          REDIS_URL: redis://localhost:6399/0
+          REDIS_REQUIRED_ON_STARTUP: "false"
+          JWT_SECRET: platform-ci-jwt-secret-only-for-tests
+          DATA_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+        run: |
+          alembic upgrade head
+          test "$(alembic heads | wc -l | tr -d ' ')" = "1"
+      - name: 单元测试 + 集成用例（fakeredis 免外部 Redis，PG 由 service 提供）
+        working-directory: backend
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql+psycopg://platform:platform_ci_postgres@127.0.0.1:5432/openapi_platform
+          REDIS_URL: redis://localhost:6399/0
+          REDIS_REQUIRED_ON_STARTUP: "false"
+          JWT_SECRET: platform-ci-jwt-secret-only-for-tests
+          DATA_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+        run: python -m pytest -q --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=60
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci
+      - name: 三语字典键一致性
+        working-directory: frontend
+        run: npm run check:i18n
+      - name: 类型检查
+        working-directory: frontend
+        run: npm run typecheck
+      - name: 单元测试
+        working-directory: frontend
+        run: npm test
+      - name: 构建
+        working-directory: frontend
+        run: npm run build
+      - name: 离线自检（禁止公网域名 / oklch / color-mix）
+        working-directory: frontend
+        run: |
+          if grep -rIE "https?://(fonts\.|cdn\.|unpkg\.|jsdelivr\.|googleapis|gstatic|sentry|datadog)" dist; then
+            echo "::error::dist 含公网域名引用，违反离线约束"; exit 1
+          fi
+          # JavaScript libraries may contain these tokens in CSS parsers without
+          # emitting either feature. Inspect only rendered style/markup assets.
+          if grep -rIl --include='*.css' --include='*.html' "oklch\|color-mix" dist; then
+            echo "::error::dist 含 oklch/color-mix，旧浏览器不兼容"; exit 1
+          fi
+          echo "✓ 离线自检通过"
+
+  container-security:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, dependency-security]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t apiplatform-backend:ci backend
+      - name: Build web image
+        run: docker build -t apiplatform-nginx:ci -f nginx/Dockerfile .
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: apiplatform-backend:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Scan web image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: apiplatform-nginx:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: apiplatform-backend:ci
+          artifact-name: apiplatform-backend-sbom.spdx.json
+      - name: Generate web SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: apiplatform-nginx:ci
+          artifact-name: apiplatform-nginx-sbom.spdx.json

@@ -1,0 +1,30 @@
+# backend 镜像的构建上下文（docker build ./backend）。
+# Dockerfile 只 COPY app/alembic/alembic.ini/gunicorn_conf.py/entrypoint.sh，
+# 但整个目录仍会先传给 daemon——.venv 一项就有上百 MB，排掉能显著加快构建。
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+logs/
+
+tests/
+data/*
+!data/platform_stats_baseline.json
+*.db
+*.sqlite3
+*.dump
+*.sql
+*.backup

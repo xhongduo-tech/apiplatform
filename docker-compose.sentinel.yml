@@ -1,0 +1,76 @@
+# ============================================================================
+# Redis Sentinel 高可用 overlay（可选）
+#
+# 用法：
+#   docker compose -f docker-compose.app.yml -f docker-compose.sentinel.yml up -d
+# 并以环境变量启用后端的 Sentinel 发现（覆盖内置默认）：
+#   REDIS_SENTINEL_NODES=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+#   REDIS_SENTINEL_MASTER=apiplatform-master
+#
+# 口令必须与主 compose 的 REDIS_PASSWORD 一致，不在源码中预置。
+#
+# 拓扑：redis(master) + redis-replica + sentinel×3（quorum=2）。
+# master 进程/容器故障后 sentinel 提升 replica，backend 经 master_for 自动
+# 跟随新 master；切换窗口内的限流命令按 fail-open 放行，不产生业务错误。
+# 实测（down-after 5000 / failover-timeout 15000）：从杀 master 到客户端在新
+# master 恢复时间取决于部署方的 Sentinel 参数；切换窗口内请求不报错（fail-open），只是 RPM/TPM
+# 限流计数暂时失效（放开不计），切换完成即恢复。若需更短切换，可调低
+# down-after-milliseconds（代价是更易因瞬时抖动误判）。原 master 恢复后被
+# sentinel 收编为 replica，不抢回主位。
+#
+# 边界（单机诚实说明）：本 overlay 防的是 Redis 进程/容器级故障；整机宕机
+# 需把 replica 与至少一个 sentinel 部署到第二台主机（本文件的服务定义可
+# 原样搬过去，改 REDIS_SENTINEL_NODES 即可）。
+# ============================================================================
+
+x-sentinel-common: &sentinel-common
+  image: ${REDIS_IMAGE:-redis:7-alpine}
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+    redis-replica:
+      condition: service_started
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      cat >/tmp/sentinel.conf <<'EOF'
+      port 26379
+      sentinel monitor apiplatform-master redis 6379 2
+      sentinel down-after-milliseconds apiplatform-master 5000
+      sentinel failover-timeout apiplatform-master 15000
+      sentinel parallel-syncs apiplatform-master 1
+      sentinel resolve-hostnames yes
+      sentinel announce-hostnames yes
+      sentinel auth-pass apiplatform-master ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      EOF
+      exec redis-sentinel /tmp/sentinel.conf
+
+services:
+  redis-replica:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    # 与主库同一口令：masterauth 用于同步，requirepass 保证故障切换后
+    # 新 master 口令一致（backend 内置连接串带同一密码）。
+    command:
+      - |
+        exec redis-server --replicaof redis 6379 --appendonly no \
+          --masterauth ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD} --requirepass ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD} ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-sentinel-1:
+    <<: *sentinel-common
+
+  redis-sentinel-2:
+    <<: *sentinel-common
+
+  redis-sentinel-3:
+    <<: *sentinel-common

@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+.vite/
+
+# Env & secrets
+.env
+.env.local
+.dev-jwt-secret
+*.local
+
+# 数据库快照属于私有运行数据，禁止进入源码发行版
+*.dump
+*.sql
+*.backup
+
+# Logs & runtime
+.dev-logs/
+*.log
+backend/*.db
+backend/*.sqlite3
+# 用量 failover 落盘（DB 持续不可用期间的持久化缓冲，运行期生成）
+backend/data/usage_failover.jsonl
+
+# Offline build artifacts
+offline-images/
+offline-wheels/
+
+# 旧版私有基线目录（开源发行版改由代码生成虚构演示数据）
+seed/
+
+# OS
+.DS_Store
+Thumbs.db

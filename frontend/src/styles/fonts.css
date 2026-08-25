@@ -1,0 +1,16 @@
+/* 全部本地打包、零 CDN、离线可用(内网部署硬约束)。
+   英文 UI 字体:Inter Variable —— Google Sans 无公开再分发授权,
+   Inter 是社区公认与其观感最接近、完全开源(OFL)的可变字重替代。
+   中文 UI 字体:Noto Sans SC Variable —— 与"思源黑体"同源同字形
+  (Adobe/Google 联合产出,仅品牌命名不同),OFL 协议,按 Unicode 区间切成
+   约 100 个小分片,浏览器只按页面实际出现的字符懒加载,不会整包下发。
+   等宽:JetBrains Mono,用于代码 / Key / 预格式化文本。 */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/noto-sans-sc";
+/* Noto Sans TC is loaded as a route-level CSS chunk when zh-TW is selected. */
+/* 英文衬线大标题:Source Serif 4 Variable —— anthropicSerif(Tiempos)无公开
+   授权,Source Serif 4 是观感最接近的开源可变字重衬线(OFL),支持 hero 的
+   300 细字重与导语 430 字重(Georgia 仅 400/700,做不出参考站的轻盈感) */
+@import "@fontsource-variable/source-serif-4";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";

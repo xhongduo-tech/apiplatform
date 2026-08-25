@@ -1,0 +1,234 @@
+# Open API Platform — 独立应用服务器部署
+#
+# 数据库 postgres 服务随平台编排；pg-backup 边车定期执行轮换、校验过的
+# PostgreSQL custom-format 快照到 Compose 项目隔离的 pgbackups 卷。
+#
+# 启动：docker compose -f docker-compose.app.yml up -d
+# 首次部署空库灌基线：bash scripts/db-seed.sh
+#
+# 离线包：由 build-offline.sh 自动打包，内网直接运行。
+services:
+  # ── 数据库（Compose 项目独立卷，不挂载其他项目的历史数据）──────────────────
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_DB: openapi_platform
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置随机 POSTGRES_PASSWORD}
+      # 初始化用 scram-sha-256，与 pg_hba 的 METHOD 保持一致
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    # 仅绑回环，不暴露到 LAN；业务连接走 compose 默认网桥
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/config/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c hba_file=/etc/postgresql/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d openapi_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # 轮换备份边车：默认每小时生成并验证一次，保留最近 168 份（约 7 天）。
+  pg-backup:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: platform
+      PGPASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置随机 POSTGRES_PASSWORD}
+      PGDATABASE: openapi_platform
+      BACKUP_INTERVAL_S: ${BACKUP_INTERVAL_S:-3600}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-168}
+      BACKUP_FAILURE_RETRY_S: ${BACKUP_FAILURE_RETRY_S:-60}
+      BACKUP_MAX_CONSECUTIVE_FAILURES: ${BACKUP_MAX_CONSECUTIVE_FAILURES:-3}
+      BACKUP_READER_GID: ${BACKUP_READER_GID:-10001}
+    volumes:
+      - pgbackups:/backups
+      - ./postgres/backup-loop.sh:/backup-loop.sh:ro
+      - ./postgres/backup-healthcheck.sh:/backup-healthcheck.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/backup-loop.sh"]
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/backup-healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--requirepass", "${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}"]
+    volumes:
+      - redisdata:/data
+    # 仅绑回环，不暴露到 LAN
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD} ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${BACKEND_IMAGE:-apiplatform-backend:latest}
+    pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    environment:
+      # 同机内置 postgres 服务，走 compose 默认网桥按服务名直连。
+      # 切勿填 127.0.0.1——那是 backend 容器自己的回环。
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://platform:${POSTGRES_PASSWORD:?请在 .env 中设置随机 POSTGRES_PASSWORD}@postgres:5432/openapi_platform
+      REDIS_URL: redis://:${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}@redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?请在 .env 中设置随机 JWT_SECRET}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?请在 .env 中设置独立的 32 字节 base64url DATA_ENCRYPTION_KEY}
+      JWT_ISSUER: ${JWT_ISSUER:-open-api-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-open-api-platform}
+      JWT_TTL_HOURS: ${JWT_TTL_HOURS:-4}
+      USER_JWT_TTL_HOURS: ${USER_JWT_TTL_HOURS:-8}
+      USER_SESSION_COOKIE: ${USER_SESSION_COOKIE:-platform_session}
+      ADMIN_SESSION_COOKIE: ${ADMIN_SESSION_COOKIE:-platform_admin_session}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
+      ADMIN_SENSITIVE_ACTION_MAX_AGE_S: ${ADMIN_SENSITIVE_ACTION_MAX_AGE_S:-600}
+      ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD: ${ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD:-false}
+      BACKUP_INTERVAL_S: ${BACKUP_INTERVAL_S:-3600}
+      ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
+      ALLOW_PASSWORD_RECOVERY: ${ALLOW_PASSWORD_RECOVERY:-false}
+      # backend 只经同一 compose 网络中的 nginx 访问，可信任其客户端地址头。
+      TRUST_PROXY_HEADERS: "true"
+      # 开源发行版默认展示完全虚构的看板数据；任一用户/Key 已存在时自动跳过。
+      DEMO_DATA_ENABLED: ${DEMO_DATA_ENABLED:-true}
+      UPSTREAM_TLS_VERIFY: ${UPSTREAM_TLS_VERIFY:-true}
+      USAGE_FAILOVER_DIR: /var/lib/apiplatform/usage
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-4}
+      DB_POOL_TIMEOUT_S: ${DB_POOL_TIMEOUT_S:-30}
+      DB_APP_INSTANCES: ${DB_APP_INSTANCES:-1}
+      DB_CONNECTION_RESERVE: ${DB_CONNECTION_RESERVE:-32}
+      HTTPX_MAX_CONNECTIONS: ${HTTPX_MAX_CONNECTIONS:-256}
+      HTTPX_MAX_KEEPALIVE: ${HTTPX_MAX_KEEPALIVE:-64}
+      USAGE_CONTENT_LOGGING_ENABLED: ${USAGE_CONTENT_LOGGING_ENABLED:-false}
+      USAGE_LOG_RETENTION_DAYS: ${USAGE_LOG_RETENTION_DAYS:-90}
+      USAGE_PROFILE_RETENTION_DAYS: ${USAGE_PROFILE_RETENTION_DAYS:-180}
+      PUBLIC_STATUS_CACHE_TTL_S: ${PUBLIC_STATUS_CACHE_TTL_S:-10}
+      PUBLIC_STATUS_QUERY_TIMEOUT_MS: ${PUBLIC_STATUS_QUERY_TIMEOUT_MS:-3000}
+      PUBLIC_STATUS_RATE_PER_MINUTE: ${PUBLIC_STATUS_RATE_PER_MINUTE:-120}
+    volumes:
+      # 只读挂载备份目录；后台默认只能看状态，原始下载需显式开启。
+      - pgbackups:/backups:ro
+      # DB 短时故障期间的用量事件 WAL；容器重建后仍可幂等回灌。
+      - usagefailover:/var/lib/apiplatform/usage
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    shm_size: 128mb
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,json,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health'); d=json.load(r); sys.exit(0 if r.status==200 and d.get('status')=='ok' else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  # ── 监控（Prometheus 抓 backend:8000/metrics，Grafana 出看板）─────────────────
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.53.0}
+    pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - promdata:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    # 仅回环：Grafana 走 compose 网络访问，不暴露到 LAN
+    ports:
+      - "${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.1.0}
+    pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    environment:
+      # 默认不创建 Grafana 管理员，避免发行包携带共享口令；如需编辑看板，部署方
+      # 同时设置 GRAFANA_DISABLE_INITIAL_ADMIN_CREATION=false 与独立强密码。
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "${GRAFANA_DISABLE_INITIAL_ADMIN_CREATION:-true}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-}"
+      # 匿名查看默认关闭；需要公开看板时由部署方显式开启。
+      GF_AUTH_ANONYMOUS_ENABLED: "${GRAFANA_ANONYMOUS_ENABLED:-false}"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_REPORT_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+
+  nginx:
+    image: ${NGINX_IMAGE:-apiplatform-nginx:latest}
+    pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    environment:
+      # 仅在 nginx 前还有受信 TLS/负载均衡代理时设置其精确 IP/CIDR；默认不信任
+      # 客户端 X-Forwarded-For，且启动脚本拒绝 0.0.0.0/0 与 ::/0。
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+    ports:
+      # first-claim 管理员完成首次设密前只监听回环；初始化后由部署方显式改为
+      # 0.0.0.0、指定管理网地址，或放到已配置访问控制的反向代理后。
+      - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-80}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redisdata:
+  promdata:
+  grafanadata:
+  pgdata:
+  pgbackups:
+  usagefailover:

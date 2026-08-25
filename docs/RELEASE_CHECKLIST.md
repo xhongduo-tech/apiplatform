@@ -1,0 +1,40 @@
+# Public release checklist
+
+The source tree is not ready to publish merely because private files were
+deleted from the current checkout. Complete every item below for each release.
+
+## Legal and repository boundary
+
+- [ ] The copyright owner has selected and approved a project license.
+- [ ] `LICENSE` is present and compatible with bundled fonts/assets and runtime
+      dependencies.
+- [ ] The release is created from a new clean repository, or a verified history
+      rewrite; old database dumps and internal assets are absent from every Git
+      object, tag and release artifact.
+- [ ] Third-party notices/SBOM have been generated and archived.
+
+## Security and privacy
+
+- [ ] `scripts/check-public-release.sh` passes from a clean checkout.
+- [ ] Python, npm, container and secret scans pass or have documented,
+      time-bounded exceptions.
+- [ ] Public registration/recovery and demo data match the intended deployment
+      profile.
+- [ ] Administrator bootstrap is complete before the bind address is widened.
+- [ ] No API key, password hash, response preview or private topology appears in
+      source, exports, images, logs or documentation.
+
+## Upgrade and recovery
+
+- [ ] Empty-database and supported-version Alembic upgrades pass.
+- [ ] Backup checksum, retention, encryption/storage policy and off-host copy
+      are configured.
+- [ ] A restore into an isolated database was completed and validated.
+- [ ] RPO, RTO, rollback and configuration changes are documented.
+
+## Quality
+
+- [ ] Backend, frontend, integration and end-to-end tests pass.
+- [ ] Mobile navigation, keyboard operation and contrast are checked.
+- [ ] Images are built reproducibly, scanned, accompanied by an SBOM and signed.
+- [ ] `CHANGELOG.md`, support window and upgrade notes are complete.

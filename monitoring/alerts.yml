@@ -1,0 +1,62 @@
+groups:
+  - name: apiplatform
+    rules:
+      - alert: ApiPlatformBackendDown
+        expr: up{job="apiplatform-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Open API Platform backend is unavailable"
+
+      - alert: ApiPlatformHighRelayErrorRate
+        expr: |
+          sum(rate(apiplatform_relay_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(apiplatform_relay_requests_total[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Relay 5xx rate has exceeded 5% for 10 minutes"
+
+      - alert: ApiPlatformUsageEventsDropped
+        expr: increase(apiplatform_usage_dropped_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Usage events were lost after both database and WAL writes failed"
+
+      - alert: ApiPlatformUsageFailoverBacklog
+        expr: apiplatform_usage_failover_pending > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Usage failover WAL has not drained for 15 minutes"
+
+      - alert: ApiPlatformUsageFailoverRecoveryFailure
+        expr: increase(apiplatform_usage_failover_recovery_failures_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Usage failover replay is failing"
+
+      - alert: ApiPlatformBackupUnverified
+        expr: apiplatform_backup_verified != 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No current PostgreSQL snapshot passes integrity verification"
+
+      - alert: ApiPlatformBackupRpoExceeded
+        expr: apiplatform_backup_stale == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The latest verified PostgreSQL snapshot exceeded its configured RPO"

@@ -1,0 +1,13 @@
+# Open API Platform 平台指标抓取（compose 网络内直连 backend，不经 nginx）
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: apiplatform-backend
+    static_configs:
+      - targets: ["backend:8000"]
+    metrics_path: /metrics

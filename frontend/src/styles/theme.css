@@ -1,0 +1,356 @@
+/* ============================================================================
+ * Open API Platform 设计系统
+ * 参考 platform.claude.com/docs:纸白底 + 陶土橙(clay)点缀 + 近黑文字 +
+ * 衬线大标题 + 发丝线描边。整体安静、克制、编辑部质感。
+ * 仅 hex / rgb / rgba,禁止 oklch()/color-mix(),兼容旧浏览器。
+ * ==========================================================================*/
+:root {
+  /* UI 字体:英文 Inter Variable(Google Sans 无公开授权,Inter 是观感最
+     接近的开源可变字重替代)+ 中文 Noto Sans SC Variable(即"思源黑体",
+     同源同字形,OFL 协议);均本地打包(fonts.css),系统栈仅作加载失败兜底 */
+  --font-sans:
+    "Inter Variable", "Noto Sans SC Variable",
+    system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
+    "Source Han Sans SC", "Noto Sans SC", "WenQuanYi Micro Hei",
+    sans-serif;
+
+  /* 等宽:本地打包的 JetBrains Mono 优先(anthropicMono 等价物) */
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular,
+    "Cascadia Code", Menlo, Consolas, "Courier New", monospace;
+
+  /* 衬线大标题:英文 Source Serif 4 Variable(anthropicSerif/Tiempos 的开源
+     近似,可变字重支持 300 细标题与 430 导语),Georgia/Times 作加载失败兜底;
+     中文一律走 Noto Sans SC Variable("思源黑体")而非中文衬线宋体
+    (中文宋体在屏显场景观感偏旧,思源黑体更贴合现代 UI),系统栈兜底 */
+  --font-serif:
+    "Source Serif 4 Variable", Georgia, "Times New Roman", Times,
+    "Noto Sans SC Variable",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
+    "Source Han Sans SC", "Noto Sans SC",
+    serif;
+
+  /* 主色:陶土橙 clay —— Claude 品牌色,用于点缀而非大面积铺陈 */
+  /* Text-sized brand accents meet WCAG AA on the paper background. */
+  --brand: #b64f2d;
+  --brand-rgb: 182, 79, 45;
+  --brand-hover: #9f3f22;
+  --brand-solid: #b64f2d;
+  --brand-soft: rgba(182, 79, 45, 0.10);
+
+  /* 墨黑(文字 / 高对比按钮) */
+  --ink: #0b0b0b;
+  --ink-rgb: 11, 11, 11;
+
+  /* 表面:纸白层次 + 发丝线描边 */
+  --bg: #fcfcfb;          /* 纸白底 */
+  --bg-soft: #f0efec;     /* 次级底色块(暖灰纸,参考站 chip/tab 底色) */
+  --card: #ffffff;
+  --card-hover: #f8f8f6;
+  --border: rgba(11, 11, 11, 0.10);        /* 发丝线 */
+  --border-strong: rgba(11, 11, 11, 0.20); /* 卡片/按钮描边(参考站 alpha .2) */
+  /* 发丝线宽:参考站全站 0.5px(retina 真发丝),旧内核在 compat.css 回退 1px */
+  --hairline: 0.5px;
+
+  --fg: #0b0b0b;
+  --fg-muted: #6f6e67;    /* 暖灰次级文字 */
+  --fg-subtle: #73716a;   /* 三级 / 非激活文字，纸白底对比度 >= 4.5:1 */
+  --fg-lead: #6f6e67;     /* 导语在 17px 下仍满足正文对比度 */
+
+  /* 语义色:低饱和,与纸白底和谐 */
+  --ok: #34845e;
+  --warn: #b4690e;
+  --danger: #cf3a3a;
+  --danger-soft: rgba(207, 58, 58, 0.09);
+  --warn-soft: rgba(180, 105, 14, 0.09);
+  --warn-soft-border: rgba(180, 105, 14, 0.25);
+
+  /* 色块(装饰性实心卡片):Claude 辅助色系
+     amber→clay 陶土橙 / sand→暖灰纸 / peach→cactus 灰绿 / blue→plum 灰紫 */
+  --block-amber: #d97757; --on-amber: #ffffff;
+  --block-sand:  #e7e6e1; --on-sand:  #0b0b0b;
+  --block-peach: #bcd1ca; --on-peach: #0b0b0b;
+  --block-blue:  #827dbd; --on-blue:  #ffffff;
+  --block-ink:   #0b0b0b; --on-ink:   #fcfcfb;
+
+  /* 代码编辑器:亮色模式用白底 GitHub-light(platform.claude.com 代码卡),
+     暗色模式在 html.dark 中整体覆写为 VSCode Dark+ */
+  --code-editor-bg: #ffffff;
+  --code-editor-bar: #fcfcfb;
+  --code-editor-footer: #f3f3ef;
+  --code-editor-border: rgba(11, 11, 11, 0.10);
+  --code-editor-linenum: #9c9a92;
+  --code-editor-comment: #6e7781;
+  --code-editor-string: #0a3069;
+  --code-editor-keyword: #cf222e;
+  --code-editor-number: #0550ae;
+  --code-editor-builtin: #8250df;
+  --code-editor-func: #8250df;
+  --code-editor-decorator: #953800;
+  --code-editor-url: #0969da;
+  --code-editor-operator: #1f2328;
+  --code-editor-plain: #1f2328;
+  --code-editor-copy: #6f6e67;
+  --code-editor-copy-active: #34845e;
+  --code-editor-flash: #c6613f;
+  --code-editor-flash-bg: rgba(217, 119, 87, 0.14);
+  --code-editor-traffic-red: #ff5f57;
+  --code-editor-traffic-yellow: #febc2e;
+  --code-editor-traffic-green: #28c840;
+
+  /* 动效令牌:统一时长与缓动(Claude 用 ease-out 快出) */
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  /* 内容入场专用缓动:淡入/滑入/数值跳动/进度条生长共用同一条曲线，
+     此前这几类动画分散用了两条不同的贝塞尔曲线，同类动作在不同页面手感不一致。 */
+  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 140ms;
+  --dur-base: 240ms;
+  --dur-slow: 420ms;
+
+  /* 焦点环 / 阴影 / 遮罩:阴影极克制,层次靠描边 */
+  --ring: #b64f2d;
+  --overlay: rgba(11, 11, 11, 0.45);
+  --shadow-sm:   0 1px 2px rgba(11, 11, 11, 0.05);
+  --shadow-card: 0 1px 3px rgba(11, 11, 11, 0.05), 0 8px 24px rgba(11, 11, 11, 0.06);
+  --shadow-pop:  0 12px 32px rgba(11, 11, 11, 0.12);
+  --shadow-hard: 0 2px 8px rgba(11, 11, 11, 0.07), 0 12px 28px rgba(11, 11, 11, 0.09);
+
+  /* 代码编辑器浅色主题(GitHub 风格,与 platform.claude.com 代码卡一致) */
+  --code-editor-light-bg: #ffffff;
+  --code-editor-light-bar: #fcfcfb;
+  --code-editor-light-border: rgba(11, 11, 11, 0.10);
+  --code-editor-light-linenum: #9c9a92;
+  --code-editor-light-comment: #6e7781;
+  --code-editor-light-string: #0a3069;
+  --code-editor-light-keyword: #cf222e;
+  --code-editor-light-number: #0550ae;
+  --code-editor-light-builtin: #8250df;
+  --code-editor-light-func: #8250df;
+  --code-editor-light-decorator: #953800;
+  --code-editor-light-url: #0969da;
+  --code-editor-light-operator: #1f2328;
+  --code-editor-light-plain: #1f2328;
+  --code-editor-light-copy: #6f6e67;
+  --code-editor-light-copy-active: #34845e;
+  --code-editor-light-flash: #c6613f;
+  --code-editor-light-flash-bg: rgba(217, 119, 87, 0.14);
+
+  /* shadcn 兼容 token —— 数值对齐,使控制台/管理后台自然融入纸白 + clay */
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card-foreground: var(--fg);
+  --popover: var(--card);
+  --popover-foreground: var(--fg);
+  --primary: var(--ink);
+  --primary-foreground: var(--bg);
+  --secondary: var(--bg-soft);
+  --secondary-foreground: var(--fg);
+  --muted: var(--bg-soft);
+  --muted-foreground: var(--fg-muted);
+  --accent: var(--brand-soft);
+  --accent-foreground: var(--brand-hover);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  --input: transparent;
+  --input-background: var(--card);
+
+  /* Logs 页“实时”光晕 / 高亮：color-mix() 的静态等值替代（本文件顶部禁用 color-mix，
+     兼容旧内核），按 --accent(rgba(217,119,87,0.10)) 与 --border/--bg-soft 手工换算 */
+  --live-glow-50: rgba(217, 119, 87, 0.05);
+  --live-glow-40: rgba(217, 119, 87, 0.04);
+  --stats-highlight-tint: rgba(240, 238, 235, 0.93);
+  --stats-highlight-border: rgba(73, 43, 34, 0.10);
+
+  /* color-mix() 静态等值（旧 Chrome / 360 壳不支持 color-mix 时使用） */
+  --primary-tint-12: rgba(11, 11, 11, 0.12);
+  --brand-tint-15: rgba(217, 119, 87, 0.15);
+  --danger-tint-6: rgba(207, 58, 58, 0.06);
+  --danger-tint-8: rgba(207, 58, 58, 0.08);
+  --danger-border-30: rgba(207, 58, 58, 0.30);
+  --st-error: var(--danger);
+  --st-warn: var(--warn);
+  --st-success: var(--ok);
+  --switch-background: rgba(11, 11, 11, 0.18);
+  --radius: 0.5rem;
+
+  /* 图表颜色:clay 为主,辅以 Claude 辅助色(mineral/plum/tan/slate) */
+  --chart-1: #d97757;
+  --chart-2: #629987;
+  --chart-3: #827dbd;
+  --chart-4: #a67c52;
+  --chart-5: #5e8ca7;
+
+  /* ── 文档代码 Tab 栏 (亮色模式:GitHub 浅底) ── */
+  --docs-tabs-bar-bg: #f6f8fa;
+  --docs-tabs-bar-border: rgba(11, 11, 11, 0.12);
+  --docs-tabs-tab-inactive: rgba(11, 11, 11, 0.5);
+  --docs-tabs-tab-active: #0b0b0b;
+  --docs-tabs-tab-hover: rgba(11, 11, 11, 0.75);
+}
+
+html[lang="zh-TW"] {
+  --font-sans:
+    "Inter Variable", "Noto Sans TC Variable",
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "PingFang TC", "Microsoft JhengHei UI", "Microsoft JhengHei", sans-serif;
+  --font-serif:
+    "Source Serif 4 Variable", Georgia, "Times New Roman", Times,
+    "Noto Sans TC Variable", "PingFang TC", "Microsoft JhengHei UI",
+    "Microsoft JhengHei", serif;
+}
+
+html.dark {
+  --brand: #d97757;
+  --brand-rgb: 217, 119, 87;
+  --brand-hover: #e08d70;
+  --brand-solid: #b64f2d;
+  --brand-soft: rgba(217, 119, 87, 0.16);
+
+  --ink: #f5f4ef;
+  --ink-rgb: 245, 244, 239;
+
+  --bg: #1f1e1c;          /* 暖碳黑 */
+  --bg-soft: #262523;
+  --card: #262524;
+  --card-hover: #2b2a28;
+  --border: rgba(245, 244, 239, 0.10);
+  --border-strong: rgba(245, 244, 239, 0.26);
+
+  --fg: #f5f4ef;
+  --fg-muted: #a8a69e;
+  --fg-subtle: #9a9890;
+  --fg-lead: #a8a69e;
+
+  --ok: #56b389;
+  --warn: #d9915b;
+  --danger: #e5695a;
+  --danger-soft: rgba(229, 105, 90, 0.14);
+  --warn-soft: rgba(217, 145, 91, 0.12);
+  --warn-soft-border: rgba(217, 145, 91, 0.28);
+
+  --block-amber: #c9704f; --on-amber: #ffffff;
+  --block-sand:  #34332f; --on-sand:  #f5f4ef;
+  --block-peach: #3d4a44; --on-peach: #e4ece8;
+  --block-blue:  #6e68a8; --on-blue:  #ffffff;
+  --block-ink:   #f5f4ef; --on-ink:   #1a1918;
+
+  /* 暗色模式:代码块切回 VSCode Dark+,稍亮于暖碳黑背景形成层次 */
+  --code-editor-bg: #252525;
+  --code-editor-bar: #303030;
+  --code-editor-footer: #1c1c1c;
+  --code-editor-border: #3e3e3e;
+  --code-editor-linenum: #6e7681;
+  --code-editor-comment: #6a9955;
+  --code-editor-string: #ce9178;
+  --code-editor-keyword: #569cd6;
+  --code-editor-number: #b5cea8;
+  --code-editor-builtin: #4ec9b0;
+  --code-editor-func: #dcdcaa;
+  --code-editor-decorator: #c586c0;
+  --code-editor-url: #4fc1ff;
+  --code-editor-operator: #d4d4d4;
+  --code-editor-plain: #d4d4d4;
+  --code-editor-copy: #8c8c8c;
+  --code-editor-copy-active: #4ec9b0;
+  --code-editor-flash: #e08d70;
+  --code-editor-flash-bg: rgba(217, 119, 87, 0.18);
+
+  --ring: #e08d70;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --shadow-sm:   0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 2px 4px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-pop:  0 14px 40px rgba(0, 0, 0, 0.55);
+  --shadow-hard: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 28px rgba(0, 0, 0, 0.35);
+
+  /* 暗色下"浅色代码卡"整体切到深色皮肤,保持同一组件可用 */
+  --code-editor-light-bg: #262524;
+  --code-editor-light-bar: #2b2a28;
+  --code-editor-light-border: rgba(245, 244, 239, 0.13);
+  --code-editor-light-linenum: #78766d;
+  --code-editor-light-comment: #8b9187;
+  --code-editor-light-string: #9ec3e8;
+  --code-editor-light-keyword: #f28b82;
+  --code-editor-light-number: #8ab4f8;
+  --code-editor-light-builtin: #c0a8f0;
+  --code-editor-light-func: #c0a8f0;
+  --code-editor-light-decorator: #e0a458;
+  --code-editor-light-url: #8ab4f8;
+  --code-editor-light-operator: #e8e6df;
+  --code-editor-light-plain: #e8e6df;
+  --code-editor-light-copy: #a8a69e;
+  --code-editor-light-copy-active: #56b389;
+  --code-editor-light-flash: #e08d70;
+  --code-editor-light-flash-bg: rgba(217, 119, 87, 0.18);
+
+  /* shadcn 兼容 token —— 暗色模式同样映射 */
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card-foreground: var(--fg);
+  --popover: var(--card);
+  --popover-foreground: var(--fg);
+  --primary: var(--ink);
+  --primary-foreground: var(--bg);
+  --secondary: var(--bg-soft);
+  --secondary-foreground: var(--fg);
+  --muted: var(--bg-soft);
+  --muted-foreground: var(--fg-muted);
+  --accent: var(--brand-soft);
+  --accent-foreground: var(--brand-hover);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  --input: var(--bg-soft);
+  --input-background: var(--bg-soft);
+
+  /* Logs 页“实时”光晕 / 高亮：color-mix() 的静态等值替代，按 --accent(rgba(217,119,87,0.16))
+     与 --border/--bg-soft 手工换算（与 light 主题同名变量对应，见上方注释） */
+  --live-glow-50: rgba(217, 119, 87, 0.08);
+  --live-glow-40: rgba(217, 119, 87, 0.064);
+  --stats-highlight-tint: rgba(40, 38, 36, 0.93);
+  --stats-highlight-border: rgba(234, 193, 177, 0.118);
+
+  --primary-tint-12: rgba(245, 244, 239, 0.12);
+  --brand-tint-15: rgba(217, 119, 87, 0.15);
+  --danger-tint-6: rgba(229, 105, 90, 0.06);
+  --danger-tint-8: rgba(229, 105, 90, 0.08);
+  --danger-border-30: rgba(229, 105, 90, 0.30);
+  --switch-background: rgba(245, 244, 239, 0.22);
+
+  /* 图表颜色 —— 暗色模式下提高明度 */
+  --chart-1: #e08d70;
+  --chart-2: #7bb5a1;
+  --chart-3: #9d97d4;
+  --chart-4: #c49a6c;
+  --chart-5: #7fa9c4;
+
+  /* ── 文档代码 Tab 栏 (暗色模式:深色底) ── */
+  --docs-tabs-bar-bg: #1a1a2e;
+  --docs-tabs-bar-border: rgba(255,255,255,0.08);
+  --docs-tabs-tab-inactive: rgba(255,255,255,0.5);
+  --docs-tabs-tab-active: #ffffff;
+  --docs-tabs-tab-hover: rgba(255,255,255,0.8);
+}
+
+/* 繁体中文：使用 Noto Sans TC Variable 替代 SC，确保繁体字形正确 */
+html[lang="zh-TW"] {
+  --font-sans:
+    "Inter Variable", "Noto Sans TC Variable",
+    system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "PingFang TC", "Hiragino Sans TC", "Microsoft JhengHei UI", "Microsoft JhengHei",
+    "Source Han Sans TC", "Noto Sans TC", "WenQuanYi Micro Hei",
+    sans-serif;
+  --font-serif:
+    "Source Serif 4 Variable", Georgia, "Times New Roman", Times,
+    "Noto Sans TC Variable",
+    "PingFang TC", "Hiragino Sans TC", "Microsoft JhengHei UI", "Microsoft JhengHei",
+    "Source Han Sans TC", "Noto Sans TC",
+    serif;
+}
+
+/* 暗色模式下反转日期选择器图标，避免深色图标在深色背景上看不清 */
+html.dark ::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
