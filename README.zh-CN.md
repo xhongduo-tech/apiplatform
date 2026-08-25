@@ -9,7 +9,7 @@
 
 [![许可证：Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-2563EB?style=flat-square)](LICENSE)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
-![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white)
+![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![OpenAI compatible](https://img.shields.io/badge/API-OpenAI%20compatible-111827?style=flat-square)
 ![Anthropic compatible](https://img.shields.io/badge/API-Anthropic%20compatible-D97706?style=flat-square)
@@ -108,7 +108,7 @@ PostgreSQL 保存配置和持久运营数据；Redis 协调限流、缓存与跨
 
 - Docker 与 Docker Compose
 - Python 3.11 或更高版本
-- Node.js 20 或更高版本
+- Node.js 24 或更高版本
 
 启动开发环境：
 

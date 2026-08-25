@@ -6,6 +6,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "✗ 发布卫生检查需要 ripgrep (rg)，当前环境未安装" >&2
+  exit 2
+fi
+
 failed=0
 
 echo "▶ 检查开源许可证"

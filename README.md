@@ -10,7 +10,7 @@ your control.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-2563EB?style=flat-square)](LICENSE)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
-![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white)
+![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![OpenAI compatible](https://img.shields.io/badge/API-OpenAI%20compatible-111827?style=flat-square)
 ![Anthropic compatible](https://img.shields.io/badge/API-Anthropic%20compatible-D97706?style=flat-square)
@@ -118,7 +118,7 @@ See [Technical architecture](docs/TECHNICAL.md) for implementation details.
 
 - Docker with Docker Compose
 - Python 3.11 or later
-- Node.js 20 or later
+- Node.js 24 or later
 
 Start the development stack:
 

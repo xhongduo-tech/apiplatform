@@ -1,0 +1,15 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Clearly synthetic credentials used in tests and public examples"
+regexTarget = "match"
+regexes = [
+  '''AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8''',
+  '''compose-validation-jwt-secret-at-least-32-characters''',
+  '''e2e-jwt-secret-release-check-at-least-32-characters''',
+  '''sk-demo-1234567890''',
+  '''sk-plain-1234567890''',
+  '''YOUR_API_KEY''',
+  '''keys\.min10CharsHint''',
+]
