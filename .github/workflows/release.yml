@@ -73,6 +73,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Install source validation dependencies
+        run: python -m pip install --require-hashes --requirement backend/requirements.lock
       - name: Install release hygiene dependencies
         run: |
           sudo apt-get update -qq
