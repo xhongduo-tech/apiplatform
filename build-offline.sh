@@ -14,12 +14,12 @@ BACKEND_IMAGE=apiplatform-backend:latest
 NGINX_IMAGE=apiplatform-nginx:latest
 POSTGRES_IMAGE=postgres:16-alpine
 REDIS_IMAGE=redis:7-alpine
-PROMETHEUS_IMAGE=prom/prometheus:v2.53.0
-GRAFANA_IMAGE=grafana/grafana:11.1.0
+PROMETHEUS_IMAGE=prom/prometheus:v3.13.2
+GRAFANA_IMAGE=grafana/grafana:13.2.0
 POSTGRES_OFFLINE=apiplatform-postgres:16-alpine
 REDIS_OFFLINE=apiplatform-redis:7-alpine
-PROMETHEUS_OFFLINE=apiplatform-prometheus:v2.53.0
-GRAFANA_OFFLINE=apiplatform-grafana:11.1.0
+PROMETHEUS_OFFLINE=apiplatform-prometheus:v3.13.2
+GRAFANA_OFFLINE=apiplatform-grafana:13.2.0
 
 # 勿用 PLATFORM：与 bash 5.2+ 的 $var? 展开冲突
 BUILD_PLATFORM="${TARGET_PLATFORM:-linux/amd64}"
@@ -129,8 +129,8 @@ BACKEND_IMAGE=apiplatform-backend:latest
 NGINX_IMAGE=apiplatform-nginx:latest
 POSTGRES_IMAGE=apiplatform-postgres:16-alpine
 REDIS_IMAGE=apiplatform-redis:7-alpine
-PROMETHEUS_IMAGE=apiplatform-prometheus:v2.53.0
-GRAFANA_IMAGE=apiplatform-grafana:11.1.0
+PROMETHEUS_IMAGE=apiplatform-prometheus:v3.13.2
+GRAFANA_IMAGE=apiplatform-grafana:13.2.0
 POSTGRES_PASSWORD=<generated-on-target>
 REDIS_PASSWORD=<generated-on-target>
 JWT_SECRET=<generated-on-target>

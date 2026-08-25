@@ -1,0 +1,8 @@
+# Bootstrap ownership for the initial public repository. Replace this account
+# with reviewed organization teams once the project has multiple maintainers.
+* @xhongduo-tech
+
+/backend/ @xhongduo-tech
+/frontend/ @xhongduo-tech
+/.github/ @xhongduo-tech
+/SECURITY.md @xhongduo-tech

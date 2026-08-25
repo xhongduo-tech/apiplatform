@@ -243,28 +243,8 @@ def public_config(db: Session = Depends(get_db)):
     }
 
 
-def _build_platform_status(
-    trend_days: int = 14,
-    dist_days: int = 30,
-    db: Session | None = None,
-):
-    """首页"平台运行情况"看板：累计/近期调用、实时并发、项目与场景维度分布。
-
-    trend_days / dist_days 由前端可选区间控制（各 clamp 到 [1, 90]）；
-    全部基于既有 usage_logs 聚合，无需额外埋点；不含用户/部门等敏感字段，可公开访问。
-    """
-    if db is None:
-        raise RuntimeError("_build_platform_status 需要数据库 Session")
-    trend_days = max(1, min(trend_days, 90))
-    dist_days = max(1, min(dist_days, 90))
-
-    ps = query_platform_stats(db)
-
-    # 今日/本月（至今）/三档同比：走永久汇总表 usage_daily_summary，与累计同口径。
-    # 同比 = 与去年同期对比：日=今日 vs 去年同日；月=本月至今 vs 去年同月同日；
-    # 累计=累计至今 vs 截至去年同日。去年同期没有记录时 prev 为 0，同比按 null 处理
-    # （前端显示 —），避免把"平台还没跑满一年"误算成夸张的增长率。
-    period_row = db.execute(text("""
+def _query_public_period(db: Session) -> dict:
+    row = db.execute(text("""
         SELECT
             COALESCE(SUM(calls) FILTER (WHERE day = date((now() AT TIME ZONE :tz))), 0) AS today_calls,
             COALESCE(SUM(total_tokens) FILTER (WHERE day = date((now() AT TIME ZONE :tz))), 0) AS today_tokens,
@@ -284,8 +264,17 @@ def _build_platform_status(
             COALESCE(SUM(total_tokens) FILTER (WHERE day <= date((now() AT TIME ZONE :tz) - INTERVAL '1 year')), 0) AS cum_yoy_tokens
         FROM usage_daily_summary
     """), sql_tz_param()).fetchone()
+    return {
+        "today_calls": int(row[0] or 0), "today_tokens": int(row[1] or 0),
+        "month_calls": int(row[2] or 0), "month_tokens": int(row[3] or 0),
+        "day_yoy_calls": int(row[4] or 0), "day_yoy_tokens": int(row[5] or 0),
+        "month_yoy_calls": int(row[6] or 0), "month_yoy_tokens": int(row[7] or 0),
+        "cum_yoy_calls": int(row[8] or 0), "cum_yoy_tokens": int(row[9] or 0),
+    }
 
-    realtime_row = db.execute(text("""
+
+def _query_public_realtime(db: Session):
+    return db.execute(text("""
         SELECT
             COUNT(*) FILTER (WHERE created_at >= now() - INTERVAL '5 minutes') AS r5_calls,
             COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= now() - INTERVAL '5 minutes'), 0) AS r5_tokens,
@@ -294,9 +283,9 @@ def _build_platform_status(
         FROM usage_logs
     """)).fetchone()
 
-    # 全局健康度（成功率/延迟）：只聚合总量，不按项目/用户拆分，公开展示不涉及
-    # 任何调用方身份信息——状态页理应回答"平台稳不稳"，此前这块完全空缺。
-    health_row = db.execute(text("""
+
+def _query_public_health(db: Session, dist_days: int):
+    return db.execute(text("""
         SELECT
             COUNT(*) AS total,
             COUNT(*) FILTER (WHERE status_code LIKE '2%') AS success,
@@ -306,7 +295,9 @@ def _build_platform_status(
         WHERE created_at >= now() - CAST(:dist_interval AS INTERVAL)
     """), {"dist_interval": f"{dist_days} days"}).fetchone()
 
-    trend_rows = db.execute(text("""
+
+def _query_public_trend(db: Session, trend_days: int):
+    return db.execute(text("""
         SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
                COALESCE(SUM(s.calls), 0) AS calls,
                COALESCE(SUM(s.total_tokens), 0) AS tokens
@@ -316,16 +307,9 @@ def _build_platform_status(
         ORDER BY d.day
     """), {"trend_interval": f"{trend_days - 1} days", **sql_tz_param()}).fetchall()
 
-    # 场景/模型分布一律走永久汇总表 usage_daily_summary——usage_logs 明细会按
-    # USAGE_LOG_RETENTION_DAYS 定期清理，直接从明细聚合会让分布图随清理逐渐失真
-    # （与累计/趋势同口径，见 admin_stats 的注释）。日粒度以 day 列与平台时区对齐。
-    # 注意：不再返回 by_project——项目名会点名具体业务（如安全类项目），需管理员
-    # 权限，匿名状态页一律不给（见文件头 _PUBLIC_BREAKDOWN_DIMENSIONS 注释）。
 
-    # 场景分布按业务场景分类（api_keys.scene_type）聚合，顺序取自 scene_types 表、
-    # 不按调用量排序；无数据的分类也保留（0 次），由前端过滤空桶。被删除分类仍被
-    # 引用的残余 key 归入「其他」桶，避免在图表里露出原始 key。
-    scene_rows = db.execute(text("""
+def _query_public_scenes(db: Session, dist_days: int) -> list[tuple]:
+    aggregate_rows = db.execute(text("""
         SELECT COALESCE(k.scene_type, 'explore') AS category,
                SUM(s.calls) AS calls,
                SUM(s.total_tokens) AS tokens
@@ -334,24 +318,27 @@ def _build_platform_status(
         WHERE s.day >= date((now() AT TIME ZONE :tz)) - CAST(:dist_interval AS INTERVAL)
         GROUP BY k.scene_type
     """), {"dist_interval": f"{dist_days} days", **sql_tz_param()}).fetchall()
-    scene_by_type = {r[0]: r for r in scene_rows}
+    scene_by_type = {row[0]: row for row in aggregate_rows}
     scene_type_rows = db.execute(
         select(SceneTypeORM.key, SceneTypeORM.label).order_by(SceneTypeORM.sort_order, SceneTypeORM.key)
     ).all()
-    scene_types = {r[0]: r[1] for r in scene_type_rows}
-    scene_rows = [(key, label, *(scene_by_type.get(key) or (key, 0, 0))[1:])
-                  for key, label in scene_types.items()]
-    unknown = {k: r for k, r in scene_by_type.items() if k not in scene_types}
+    scene_types = {row[0]: row[1] for row in scene_type_rows}
+    rows = [
+        (key, label, *(scene_by_type.get(key) or (key, 0, 0))[1:])
+        for key, label in scene_types.items()
+    ]
+    unknown = {key: row for key, row in scene_by_type.items() if key not in scene_types}
     if unknown:
-        scene_rows.append((
+        rows.append((
             "other", "其他",
-            sum(r[1] for r in unknown.values()),
-            sum(r[2] for r in unknown.values()),
+            sum(row[1] for row in unknown.values()),
+            sum(row[2] for row in unknown.values()),
         ))
+    return rows
 
-    # 模型分布：返回全部有调用的模型，排序交给前端按当前 metric（调用/Token）决定，
-    # 否则切到 Token 口径时拿不到「Token 高的模型」。
-    model_rows = db.execute(text("""
+
+def _query_public_models(db: Session, dist_days: int) -> tuple[list, dict]:
+    rows = db.execute(text("""
         SELECT s.model_id,
                SUM(s.calls) AS calls,
                SUM(s.total_tokens) AS tokens
@@ -360,80 +347,115 @@ def _build_platform_status(
         GROUP BY s.model_id
         ORDER BY calls DESC
     """), {"dist_interval": f"{dist_days} days", **sql_tz_param()}).fetchall()
-    model_names = {
-        r[0]: r[1]
-        for r in db.execute(select(ModelRegistryORM.id, ModelRegistryORM.name)).all()
+    names = {
+        row[0]: row[1]
+        for row in db.execute(select(ModelRegistryORM.id, ModelRegistryORM.name)).all()
     }
+    return rows, names
 
-    # 月活 Key：最近 30 天（滚动窗口）内有调用记录的 Key 数，供「存量 API Key」卡片小字展示。
-    monthly_active_keys = int(
-        db.execute(text("""
+
+def _query_monthly_active_keys(db: Session) -> int:
+    return int(db.execute(text("""
             SELECT COUNT(DISTINCT api_key_id)
             FROM usage_daily_summary
             WHERE day >= date((now() AT TIME ZONE :tz)) - INTERVAL '29 days'
-        """), sql_tz_param()).scalar() or 0
-    )
+        """), sql_tz_param()).scalar() or 0)
 
-    def _pct(part: int, total: int) -> float:
-        return round(part / total * 100, 1) if total else 0.0
 
-    scene_total = sum(r[2] for r in scene_rows) or 0
-    health_total = int(health_row[0] or 0) if health_row else 0
-
-    period = {
-        "today_calls": int(period_row[0] or 0), "today_tokens": int(period_row[1] or 0),
-        "month_calls": int(period_row[2] or 0), "month_tokens": int(period_row[3] or 0),
-        "day_yoy_calls": int(period_row[4] or 0), "day_yoy_tokens": int(period_row[5] or 0),
-        "month_yoy_calls": int(period_row[6] or 0), "month_yoy_tokens": int(period_row[7] or 0),
-        "cum_yoy_calls": int(period_row[8] or 0), "cum_yoy_tokens": int(period_row[9] or 0),
+def _public_yoy(ps: dict, period: dict) -> dict:
+    return {
+        "day": {
+            "calls": _yoy(period["today_calls"], period["day_yoy_calls"]),
+            "tokens": _yoy(period["today_tokens"], period["day_yoy_tokens"]),
+        },
+        "month": {
+            "calls": _yoy(period["month_calls"], period["month_yoy_calls"]),
+            "tokens": _yoy(period["month_tokens"], period["month_yoy_tokens"]),
+        },
+        "cumulative": {
+            "calls": _yoy(ps["total_calls"], period["cum_yoy_calls"]),
+            "tokens": _yoy(ps["total_tokens"], period["cum_yoy_tokens"]),
+        },
     }
 
+
+def _public_health(row) -> dict:
+    total = int(row[0] or 0) if row else 0
+    return {
+        "success_rate": round((row[1] or 0) / total * 100, 2) if total else None,
+        "avg_latency_ms": round(row[2]) if row and row[2] is not None else None,
+        "p95_latency_ms": round(row[3]) if row and row[3] is not None else None,
+        "sample_calls": total,
+    }
+
+
+def _public_scene_rows(rows: list[tuple]) -> list[dict]:
+    total = sum(row[2] for row in rows) or 0
+    return [
+        {
+            "category": row[0], "label": row[1], "calls": row[2], "tokens": row[3] or 0,
+            "pct": round(row[2] / total * 100, 1) if total else 0.0,
+        }
+        for row in rows
+    ]
+
+
+def _render_public_status(
+    *, ps: dict, period: dict, realtime, health, trend_rows: list,
+    scene_rows: list[tuple], model_rows: list, model_names: dict,
+    monthly_active_keys: int, trend_days: int, dist_days: int,
+) -> dict:
     return {
         "cumulative": {
             "calls": ps["total_calls"], "tokens": ps["total_tokens"], "active_keys": ps["active_keys"],
         },
         "today": {"calls": period["today_calls"], "tokens": period["today_tokens"]},
         "month": {"calls": period["month_calls"], "tokens": period["month_tokens"]},
-        # 三档同比（去年同期无数据时为 null）；累计口径含 initial baseline，同比分子/分母
-        # 都被 baseline 抬高，仅反映"库里可记录的增量"对比，见 _yoy 注释。
-        "yoy": {
-            "day": {
-                "calls": _yoy(period["today_calls"], period["day_yoy_calls"]),
-                "tokens": _yoy(period["today_tokens"], period["day_yoy_tokens"]),
-            },
-            "month": {
-                "calls": _yoy(period["month_calls"], period["month_yoy_calls"]),
-                "tokens": _yoy(period["month_tokens"], period["month_yoy_tokens"]),
-            },
-            "cumulative": {
-                "calls": _yoy(ps["total_calls"], period["cum_yoy_calls"]),
-                "tokens": _yoy(ps["total_tokens"], period["cum_yoy_tokens"]),
-            },
-        },
+        "yoy": _public_yoy(ps, period),
         "monthly_active_keys": monthly_active_keys,
         "trend_days": trend_days,
         "dist_days": dist_days,
-        "trend": [{"day": r[0], "calls": r[1], "tokens": r[2] or 0} for r in trend_rows],
+        "trend": [{"day": row[0], "calls": row[1], "tokens": row[2] or 0} for row in trend_rows],
         "realtime": {
-            "recent_5min": {"calls": int(realtime_row[0] or 0), "tokens": int(realtime_row[1] or 0)},
-            "recent_1h": {"calls": int(realtime_row[2] or 0), "tokens": int(realtime_row[3] or 0)},
+            "recent_5min": {"calls": int(realtime[0] or 0), "tokens": int(realtime[1] or 0)},
+            "recent_1h": {"calls": int(realtime[2] or 0), "tokens": int(realtime[3] or 0)},
         },
-        "health": {
-            "success_rate": round((health_row[1] or 0) / health_total * 100, 2) if health_total else None,
-            "avg_latency_ms": round(health_row[2]) if health_row and health_row[2] is not None else None,
-            "p95_latency_ms": round(health_row[3]) if health_row and health_row[3] is not None else None,
-            "sample_calls": health_total,
-        },
-        "by_scene": [
-            {"category": r[0], "label": r[1], "calls": r[2], "tokens": r[3] or 0,
-             "pct": _pct(r[2], scene_total)}
-            for r in scene_rows
-        ],
+        "health": _public_health(health),
+        "by_scene": _public_scene_rows(scene_rows),
         "by_model": [
-            {"model_id": r[0], "name": model_names.get(r[0], r[0]), "calls": r[1], "tokens": r[2] or 0}
-            for r in model_rows
+            {
+                "model_id": row[0], "name": model_names.get(row[0], row[0]),
+                "calls": row[1], "tokens": row[2] or 0,
+            }
+            for row in model_rows
         ],
     }
+
+
+def _build_platform_status(
+    trend_days: int = 14,
+    dist_days: int = 30,
+    db: Session | None = None,
+):
+    """构建匿名状态页；查询、归一化和响应渲染分别由小函数负责。"""
+    if db is None:
+        raise RuntimeError("_build_platform_status 需要数据库 Session")
+    trend_days = max(1, min(trend_days, 90))
+    dist_days = max(1, min(dist_days, 90))
+    model_rows, model_names = _query_public_models(db, dist_days)
+    return _render_public_status(
+        ps=query_platform_stats(db),
+        period=_query_public_period(db),
+        realtime=_query_public_realtime(db),
+        health=_query_public_health(db, dist_days),
+        trend_rows=_query_public_trend(db, trend_days),
+        scene_rows=_query_public_scenes(db, dist_days),
+        model_rows=model_rows,
+        model_names=model_names,
+        monthly_active_keys=_query_monthly_active_keys(db),
+        trend_days=trend_days,
+        dist_days=dist_days,
+    )
 
 
 def _query_platform_status_cached(cache_key: str, trend_days: int, dist_days: int) -> dict:

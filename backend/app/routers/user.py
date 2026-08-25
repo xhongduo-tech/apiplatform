@@ -1084,6 +1084,84 @@ def _retention_info(db: Session, key_ids: list[str], date_from: str | None) -> t
     return days, cutoff_utc.isoformat(), has_purged_range
 
 
+def _user_log_key_names(db: Session, auth_id: str) -> tuple[dict[str, str], list[str]]:
+    rows = db.execute(
+        select(ApiKeyORM.id, ApiKeyORM.name, ApiKeyORM.project_name).where(ApiKeyORM.auth_id == auth_id)
+    ).all()
+    names = {row.id: (row.name or row.project_name or row.id[:8]) for row in rows}
+    unique = sorted({(row.name or row.project_name or row.id[:8]) for row in rows if (row.name or row.project_name)})
+    return names, unique
+
+
+def _user_log_csv_row(row: UsageLogORM, key_names: dict[str, str]) -> list:
+    return [
+        row.created_at.strftime("%Y-%m-%d %H:%M:%S") if row.created_at else "",
+        row.model_id or "",
+        key_names.get(row.api_key_id, row.api_key_id[:8]),
+        row.request_id or "",
+        row.prompt_tokens or 0,
+        row.completion_tokens or 0,
+        row.total_tokens or 0,
+        row.cache_hit_tokens or 0,
+        row.cache_miss_tokens or 0,
+        row.cache_write_tokens or 0,
+        row.latency_ms or 0,
+        row.total_duration_ms or 0,
+        round(float(row.estimated_cost), 6) if row.estimated_cost is not None else 0,
+        row.status_code or "",
+        "是" if row.stream else "否",
+        "是" if row.usage_estimated else "否",
+        (row.error_detail or "").replace("\n", " ").replace("\r", " "),
+    ]
+
+
+def _export_user_logs(db: Session, conds: list, order_col, key_names: dict[str, str]):
+    rows = db.execute(
+        select(UsageLogORM).where(*conds).order_by(order_col).limit(10000)
+    ).scalars().all()
+    return csv_download(
+        [
+            "时间", "模型", "API Key", "Request ID",
+            "Prompt Tokens", "Completion Tokens", "总Token",
+            "缓存命中Token", "缓存未命中Token", "缓存写入Token",
+            "TTFT(ms)", "整体耗时(ms)", "预估费用",
+            "状态码", "流式", "Token为估算值", "错误信息",
+        ],
+        [_user_log_csv_row(row, key_names) for row in rows],
+        f"api-logs-{platform_time.now_local().strftime('%Y-%m-%d')}.csv",
+    )
+
+
+def _user_log_record(row: UsageLogORM, key_names: dict[str, str]) -> dict:
+    return {
+        "id": row.id, "model_id": row.model_id,
+        "request_id": row.request_id,
+        "api_key_name": key_names.get(row.api_key_id, row.api_key_id[:8]),
+        "prompt_tokens": row.prompt_tokens or 0,
+        "completion_tokens": row.completion_tokens or 0,
+        "total_tokens": row.total_tokens or 0,
+        "cache_hit_tokens": row.cache_hit_tokens or 0,
+        "cache_miss_tokens": row.cache_miss_tokens or 0,
+        "cache_write_tokens": row.cache_write_tokens or 0,
+        "latency_ms": row.latency_ms or 0,
+        "total_duration_ms": row.total_duration_ms or 0,
+        "estimated_cost": float(row.estimated_cost) if row.estimated_cost is not None else 0.0,
+        "usage_estimated": bool(row.usage_estimated),
+        "stream": bool(row.stream),
+        "status_code": int(row.status_code) if (row.status_code or "").isdigit() else 0,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "error_detail": row.error_detail,
+        "response_preview": row.response_preview,
+    }
+
+
+def _user_log_unique_models(db: Session, conds: list) -> list[str]:
+    rows = db.execute(
+        select(UsageLogORM.model_id).where(*conds).distinct().limit(1000)
+    ).scalars().all()
+    return sorted({model for model in rows if model})
+
+
 @router.get("/user/logs")
 def user_logs_paged(
     limit: int = Query(default=50),
@@ -1121,54 +1199,13 @@ def user_logs_paged(
         db=db,
     )
 
-    # 该账号 ID名下全部密钥的名称（含已撤销），用于在日志明细中标注调用所属 API Key / 场景
-    key_rows = db.execute(
-        select(ApiKeyORM.id, ApiKeyORM.name, ApiKeyORM.project_name).where(ApiKeyORM.auth_id == auth_id)
-    ).all()
-    key_names = {row.id: (row.name or row.project_name or row.id[:8]) for row in key_rows}
-    unique_key_names_all = sorted({(row.name or row.project_name or row.id[:8]) for row in key_rows if (row.name or row.project_name)})
+    # 全部密钥（含已撤销）的显示名，用于标注日志所属场景。
+    key_names, unique_key_names_all = _user_log_key_names(db, auth_id)
 
     order_col = _log_sort_order(sort_field, sort_dir)
 
     if export == "csv":
-        # 导出全部筛选结果（上限 10000 条避免内存爆炸）
-        rows = db.execute(
-            select(UsageLogORM).where(*conds)
-            .order_by(order_col)
-            .limit(10000)
-        ).scalars().all()
-        csv_rows = []
-        for r in rows:
-            csv_rows.append([
-                r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
-                r.model_id or "",
-                key_names.get(r.api_key_id, r.api_key_id[:8]),
-                r.request_id or "",
-                r.prompt_tokens or 0,
-                r.completion_tokens or 0,
-                r.total_tokens or 0,
-                r.cache_hit_tokens or 0,
-                r.cache_miss_tokens or 0,
-                r.cache_write_tokens or 0,
-                r.latency_ms or 0,
-                r.total_duration_ms or 0,
-                round(float(r.estimated_cost), 6) if r.estimated_cost is not None else 0,
-                r.status_code or "",
-                "是" if r.stream else "否",
-                "是" if r.usage_estimated else "否",
-                (r.error_detail or "").replace("\n", " ").replace("\r", " "),
-            ])
-        return csv_download(
-            [
-                "时间", "模型", "API Key", "Request ID",
-                "Prompt Tokens", "Completion Tokens", "总Token",
-                "缓存命中Token", "缓存未命中Token", "缓存写入Token",
-                "TTFT(ms)", "整体耗时(ms)", "预估费用",
-                "状态码", "流式", "Token为估算值", "错误信息",
-            ],
-            csv_rows,
-            f"api-logs-{platform_time.now_local().strftime('%Y-%m-%d')}.csv",
-        )
+        return _export_user_logs(db, conds, order_col, key_names)
 
     total = db.execute(select(func.count()).select_from(UsageLogORM).where(*conds)).scalar() or 0
     rows = db.execute(
@@ -1176,29 +1213,7 @@ def user_logs_paged(
         .order_by(order_col)
         .limit(min(limit, 200)).offset(offset)
     ).scalars().all()
-    records = [
-        {
-            "id": r.id, "model_id": r.model_id,
-            "request_id": r.request_id,
-            "api_key_name": key_names.get(r.api_key_id, r.api_key_id[:8]),
-            "prompt_tokens": r.prompt_tokens or 0,
-            "completion_tokens": r.completion_tokens or 0,
-            "total_tokens": r.total_tokens or 0,
-            "cache_hit_tokens": r.cache_hit_tokens or 0,
-            "cache_miss_tokens": r.cache_miss_tokens or 0,
-            "cache_write_tokens": r.cache_write_tokens or 0,
-            "latency_ms": r.latency_ms or 0,
-            "total_duration_ms": r.total_duration_ms or 0,
-            "estimated_cost": float(r.estimated_cost) if r.estimated_cost is not None else 0.0,
-            "usage_estimated": bool(r.usage_estimated),
-            "stream": bool(r.stream),
-            "status_code": int(r.status_code) if (r.status_code or "").isdigit() else 0,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "error_detail": r.error_detail,
-            "response_preview": r.response_preview,
-        }
-        for r in rows
-    ]
+    records = [_user_log_record(row, key_names) for row in rows]
 
     # 去重模型列表（从全部匹配结果中取，非当前页）——limit 1000 防止大用户慢查询。
     # 注意要排除模型筛选条件本身：否则选中某个模型后，筛选面板里的其它模型选项
@@ -1210,10 +1225,7 @@ def user_logs_paged(
         hour=str(hour) if hour is not None else None,
         db=db,
     )
-    model_rows = db.execute(
-        select(UsageLogORM.model_id).where(*model_conds).distinct().limit(1000)
-    ).scalars().all()
-    unique_models = sorted(set(m for m in model_rows if m))
+    unique_models = _user_log_unique_models(db, model_conds)
 
     return {
         "total": total, "records": records, "retention_days": retention_days,

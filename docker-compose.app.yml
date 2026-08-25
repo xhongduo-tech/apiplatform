@@ -1,18 +1,27 @@
-# Open API Platform — 独立应用服务器部署
+# Open API Platform — prebuilt-image / offline deployment
 #
 # 数据库 postgres 服务随平台编排；pg-backup 边车定期执行轮换、校验过的
 # PostgreSQL custom-format 快照到 Compose 项目隔离的 pgbackups 卷。
 #
-# 启动：docker compose -f docker-compose.app.yml up -d
-# 首次部署空库灌基线：bash scripts/db-seed.sh
+# 从源码构建并启动：docker compose up -d --build（使用 docker-compose.yml）
+# 使用预构建镜像启动：docker compose -f docker-compose.app.yml up -d
+# backend entrypoint 会自动迁移空库并按 DEMO_DATA_ENABLED 决定是否写入虚构数据。
 #
 # 离线包：由 build-offline.sh 自动打包，内网直接运行。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    # Prevent long-running gateways from exhausting the Docker host disk.
+    max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+    max-file: "${DOCKER_LOG_MAX_FILES:-5}"
+
 services:
   # ── 数据库（Compose 项目独立卷，不挂载其他项目的历史数据）──────────────────
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
+    logging: *default-logging
     shm_size: 256mb
     environment:
       POSTGRES_DB: openapi_platform
@@ -39,9 +48,10 @@ services:
 
   # 轮换备份边车：默认每小时生成并验证一次，保留最近 168 份（约 7 天）。
   pg-backup:
-    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
+    logging: *default-logging
     environment:
       PGHOST: postgres
       PGUSER: platform
@@ -68,9 +78,10 @@ services:
       start_period: 90s
 
   redis:
-    image: ${REDIS_IMAGE:-redis:7-alpine}
+    image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
+    logging: *default-logging
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--requirepass", "${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}"]
     volumes:
       - redisdata:/data
@@ -87,10 +98,15 @@ services:
     image: ${BACKEND_IMAGE:-apiplatform-backend:latest}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
+    logging: *default-logging
+    stop_grace_period: 45s
     environment:
       # 同机内置 postgres 服务，走 compose 默认网桥按服务名直连。
       # 切勿填 127.0.0.1——那是 backend 容器自己的回环。
       ENVIRONMENT: production
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
+      # 商业版等外部发行物仅通过版本化扩展契约接入；社区版默认不加载扩展。
+      APPLICATION_EXTENSIONS: ${APPLICATION_EXTENSIONS:-}
       DATABASE_URL: postgresql+psycopg://platform:${POSTGRES_PASSWORD:?请在 .env 中设置随机 POSTGRES_PASSWORD}@postgres:5432/openapi_platform
       REDIS_URL: redis://:${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}@redis:6379/0
       REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}
@@ -160,9 +176,11 @@ services:
 
   # ── 监控（Prometheus 抓 backend:8000/metrics，Grafana 出看板）─────────────────
   prometheus:
-    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.53.0}
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
+    logging: *default-logging
+    stop_grace_period: 30s
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
@@ -170,14 +188,29 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     # 仅回环：Grafana 走 compose 网络访问，不暴露到 LAN
     ports:
       - "${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/ready >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   grafana:
-    image: ${GRAFANA_IMAGE:-grafana/grafana:11.1.0}
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.2.0@sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
+    logging: *default-logging
+    stop_grace_period: 30s
     environment:
       # 默认不创建 Grafana 管理员，避免发行包携带共享口令；如需编辑看板，部署方
       # 同时设置 GRAFANA_DISABLE_INITIAL_ADMIN_CREATION=false 与独立强密码。
@@ -187,20 +220,41 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "${GRAFANA_ANONYMOUS_ENABLED:-false}"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_ANALYTICS_REPORT_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED: "true"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafanadata:/var/lib/grafana
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   nginx:
     image: ${NGINX_IMAGE:-apiplatform-nginx:latest}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
+    logging: *default-logging
+    stop_grace_period: 15s
     environment:
       # 仅在 nginx 前还有受信 TLS/负载均衡代理时设置其精确 IP/CIDR；默认不信任
       # 客户端 X-Forwarded-For，且启动脚本拒绝 0.0.0.0/0 与 ::/0。

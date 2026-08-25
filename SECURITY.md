@@ -9,13 +9,16 @@ The project does not currently promise an LTS support window.
 ## Reporting a vulnerability
 
 Do not open a public issue containing exploit details, credentials, private
-data, or a working proof of concept. Use the repository host's private security
-advisory feature, or contact the maintainers through the private address listed
-in the repository metadata.
+data, or a working proof of concept. On the public GitHub repository, open the
+**Security** tab, choose **Advisories**, then **Report a vulnerability**. This
+creates a private advisory visible only to the reporter and the repository's
+security maintainers. If the button is absent, do not post details publicly;
+ask the repository owner to enable GitHub Private Vulnerability Reporting.
 
 Please include the affected version, deployment topology, reproduction steps,
 impact, and any suggested mitigation. Maintainers should acknowledge a report
-within five business days and coordinate disclosure after a fix is available.
+within five business days, provide a status update at least every ten business
+days, and coordinate disclosure after a fix is available.
 
 ## Deployment baseline
 

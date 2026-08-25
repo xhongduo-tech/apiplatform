@@ -31,21 +31,24 @@ def temporary_database(requires_db):
     assert re.fullmatch(r"apiplatform_mig035_[0-9a-f]{32}", name)
     maintenance_url = source.set(database="postgres")
     admin_engine = create_engine(maintenance_url, isolation_level="AUTOCOMMIT")
+    created = False
     try:
         try:
             with admin_engine.connect() as conn:
                 conn.execute(text(f'CREATE DATABASE "{name}"'))
+                created = True
         except SQLAlchemyError as exc:
             pytest.skip(f"当前隔离 PostgreSQL 用户无 CREATE DATABASE 权限: {exc}")
         yield source.set(database=name)
     finally:
         try:
-            with admin_engine.connect() as conn:
-                conn.execute(text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = :name AND pid <> pg_backend_pid()"
-                ), {"name": name})
-                conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+            if created:
+                with admin_engine.connect() as conn:
+                    conn.execute(text(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = :name AND pid <> pg_backend_pid()"
+                    ), {"name": name})
+                    conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
         finally:
             admin_engine.dispose()
 

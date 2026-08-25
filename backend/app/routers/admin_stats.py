@@ -403,6 +403,166 @@ def _admin_log_order(sort_field: str | None, sort_dir: str | None):
     return col.desc() if dir_desc else col.asc()
 
 
+def _admin_usage_key_map(db: Session, rows: list[UsageLogORM]) -> dict:
+    key_ids = {row.api_key_id for row in rows}
+    if not key_ids:
+        return {}
+    keys = db.query(ApiKeyORM).filter(ApiKeyORM.id.in_(key_ids)).all()
+    return {
+        key.id: {
+            "name": key.name or key.id[:8],
+            "department": key.department or "",
+            "auth_id": key.auth_id or "",
+        }
+        for key in keys
+    }
+
+
+def _admin_usage_record(row: UsageLogORM, key_map: dict) -> dict:
+    code = row.status_code or "200"
+    key = key_map.get(row.api_key_id, {})
+    return {
+        "id": row.id,
+        "request_id": row.request_id,
+        "model_id": row.model_id,
+        "api_key_id": row.api_key_id,
+        "key_name": key.get("name", row.api_key_id),
+        "department": key.get("department", ""),
+        "auth_id": key.get("auth_id", ""),
+        "prompt_tokens": row.prompt_tokens or 0,
+        "completion_tokens": row.completion_tokens or 0,
+        "total_tokens": row.total_tokens or 0,
+        "cache_hit_tokens": row.cache_hit_tokens or 0,
+        "cache_miss_tokens": row.cache_miss_tokens or 0,
+        "cache_write_tokens": row.cache_write_tokens or 0,
+        "latency_ms": row.latency_ms or 0,
+        "total_duration_ms": row.total_duration_ms or 0,
+        "estimated_cost": float(row.estimated_cost) if row.estimated_cost is not None else 0.0,
+        "usage_estimated": bool(row.usage_estimated),
+        "stream": bool(row.stream),
+        "status_code": int(code) if code.isdigit() else 0,
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+        "error_detail": row.error_detail or "",
+        "response_preview": row.response_preview or "",
+    }
+
+
+def _admin_usage_csv_row(row: UsageLogORM, key_map: dict) -> list:
+    key = key_map.get(row.api_key_id, {})
+    return [
+        row.created_at.strftime("%Y-%m-%d %H:%M:%S") if row.created_at else "",
+        row.model_id or "",
+        key.get("name", row.api_key_id),
+        key.get("department", ""),
+        row.request_id or "",
+        row.prompt_tokens or 0,
+        row.completion_tokens or 0,
+        row.total_tokens or 0,
+        row.cache_hit_tokens or 0,
+        row.cache_miss_tokens or 0,
+        row.latency_ms or 0,
+        row.total_duration_ms or 0,
+        round(float(row.estimated_cost), 6) if row.estimated_cost is not None else 0,
+        row.status_code or "",
+        "是" if row.stream else "否",
+        "是" if row.usage_estimated else "否",
+        (row.error_detail or "").replace("\n", " ").replace("\r", " "),
+    ]
+
+
+def _export_admin_usage(db: Session, conds: list, order_col, export_limit: int):
+    rows = db.execute(
+        select(UsageLogORM).where(*conds).order_by(order_col).limit(min(max(export_limit, 1), 50000))
+    ).scalars().all()
+    key_map = _admin_usage_key_map(db, rows)
+    return csv_download(
+        [
+            "时间", "模型", "API Key", "部门", "Request ID",
+            "Prompt Tokens", "Completion Tokens", "总Token",
+            "缓存命中Token", "缓存未命中Token",
+            "TTFT(ms)", "整体耗时(ms)", "预估费用",
+            "状态码", "流式", "Token为估算值", "错误信息",
+        ],
+        [_admin_usage_csv_row(row, key_map) for row in rows],
+        f"admin-usage-{now_local().strftime('%Y-%m-%d')}.csv",
+    )
+
+
+def _admin_usage_stats(db: Session, conds: list, total: int) -> dict:
+    empty = {
+        "total": total, "success_count": 0, "success_rate": 0.0,
+        "avg_latency_ms": None, "p95_latency_ms": None,
+        "avg_duration_ms": None, "p95_duration_ms": None,
+        "cache_hit_tokens": 0, "cache_miss_tokens": 0, "cache_hit_rate": None,
+    }
+    if total <= 0:
+        return empty
+    success = db.execute(
+        select(func.count()).select_from(UsageLogORM).where(*conds, UsageLogORM.status_code.like("2%"))
+    ).scalar() or 0
+    latency = db.execute(
+        select(
+            func.avg(UsageLogORM.latency_ms),
+            func.percentile_cont(0.95).within_group(UsageLogORM.latency_ms),
+        ).where(*conds, UsageLogORM.latency_ms.isnot(None), UsageLogORM.latency_ms > 0)
+    ).one()
+    duration = db.execute(
+        select(
+            func.avg(UsageLogORM.total_duration_ms),
+            func.percentile_cont(0.95).within_group(UsageLogORM.total_duration_ms),
+        ).where(*conds, UsageLogORM.total_duration_ms.isnot(None), UsageLogORM.total_duration_ms > 0)
+    ).one()
+    cache_hit, cache_miss = db.execute(
+        select(
+            func.coalesce(func.sum(UsageLogORM.cache_hit_tokens), 0),
+            func.coalesce(func.sum(UsageLogORM.cache_miss_tokens), 0),
+        ).where(*conds)
+    ).one()
+    cache_hit, cache_miss = int(cache_hit or 0), int(cache_miss or 0)
+    cache_total = cache_hit + cache_miss
+    total_cost = db.execute(
+        select(func.coalesce(func.sum(UsageLogORM.estimated_cost), 0)).where(*conds)
+    ).scalar() or 0
+    return {
+        "total": total, "success_count": success,
+        "success_rate": round(success / total * 100, 1),
+        "avg_latency_ms": round(latency[0]) if latency[0] is not None else None,
+        "p95_latency_ms": round(latency[1]) if latency[1] is not None else None,
+        "avg_duration_ms": round(duration[0]) if duration[0] is not None else None,
+        "p95_duration_ms": round(duration[1]) if duration[1] is not None else None,
+        "cache_hit_tokens": cache_hit, "cache_miss_tokens": cache_miss,
+        "cache_hit_rate": round(cache_hit / cache_total * 100, 1) if cache_total else None,
+        "total_cost": round(float(total_cost), 6),
+    }
+
+
+def _admin_usage_facets(db: Session, conds: list) -> dict:
+    models = db.execute(
+        select(UsageLogORM.model_id).where(*conds).distinct().limit(1000)
+    ).scalars().all()
+    departments = db.execute(
+        select(ApiKeyORM.department).join(UsageLogORM, UsageLogORM.api_key_id == ApiKeyORM.id)
+        .where(*conds).distinct().limit(200)
+    ).scalars().all()
+    key_names = db.execute(
+        select(ApiKeyORM.name).join(UsageLogORM, UsageLogORM.api_key_id == ApiKeyORM.id)
+        .where(*conds).distinct().limit(500)
+    ).scalars().all()
+    return {
+        "unique_models": sorted({value for value in models if value}),
+        "unique_departments": sorted({value for value in departments if value}),
+        "unique_key_names": sorted({value for value in key_names if value}),
+    }
+
+
+def _admin_usage_maxima(db: Session) -> dict:
+    return {
+        "max_ttft_ms": int(db.execute(select(func.max(UsageLogORM.latency_ms))).scalar() or 0),
+        "max_duration_ms": int(db.execute(select(func.max(UsageLogORM.total_duration_ms))).scalar() or 0),
+        "max_total_tokens": int(db.execute(select(func.max(UsageLogORM.total_tokens))).scalar() or 0),
+    }
+
+
 @router.get("/usage")
 def list_usage(
     limit: int = 200,
@@ -436,75 +596,8 @@ def list_usage(
 
     order_col = _admin_log_order(sort_field, sort_dir)
 
-    def _row_dict(r, key_map):
-        code = r.status_code or "200"
-        return {
-            "id": r.id,
-            "request_id": r.request_id,
-            "model_id": r.model_id,
-            "api_key_id": r.api_key_id,
-            "key_name": key_map.get(r.api_key_id, {}).get("name", r.api_key_id),
-            "department": key_map.get(r.api_key_id, {}).get("department", ""),
-            "auth_id": key_map.get(r.api_key_id, {}).get("auth_id", ""),
-            "prompt_tokens": r.prompt_tokens or 0,
-            "completion_tokens": r.completion_tokens or 0,
-            "total_tokens": r.total_tokens or 0,
-            "cache_hit_tokens": r.cache_hit_tokens or 0,
-            "cache_miss_tokens": r.cache_miss_tokens or 0,
-            "cache_write_tokens": r.cache_write_tokens or 0,
-            "latency_ms": r.latency_ms or 0,
-            "total_duration_ms": r.total_duration_ms or 0,
-            "estimated_cost": float(r.estimated_cost) if r.estimated_cost is not None else 0.0,
-            "usage_estimated": bool(r.usage_estimated),
-            "stream": bool(r.stream),
-            "status_code": int(code) if code.isdigit() else 0,
-            "created_at": r.created_at.isoformat() if r.created_at else "",
-            "error_detail": r.error_detail or "",
-            "response_preview": r.response_preview or "",
-        }
-
     if export == "csv":
-        rows = db.execute(
-            select(UsageLogORM).where(*conds).order_by(order_col).limit(min(max(export_limit, 1), 50000))
-        ).scalars().all()
-        key_ids = list({r.api_key_id for r in rows})
-        key_map = {}
-        if key_ids:
-            for k in db.query(ApiKeyORM).filter(ApiKeyORM.id.in_(key_ids)).all():
-                key_map[k.id] = {"name": k.name or k.id[:8], "department": k.department or "", "auth_id": k.auth_id or ""}
-        csv_rows = []
-        for r in rows:
-            km = key_map.get(r.api_key_id, {})
-            csv_rows.append([
-                r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
-                r.model_id or "",
-                km.get("name", r.api_key_id),
-                km.get("department", ""),
-                r.request_id or "",
-                r.prompt_tokens or 0,
-                r.completion_tokens or 0,
-                r.total_tokens or 0,
-                r.cache_hit_tokens or 0,
-                r.cache_miss_tokens or 0,
-                r.latency_ms or 0,
-                r.total_duration_ms or 0,
-                round(float(r.estimated_cost), 6) if r.estimated_cost is not None else 0,
-                r.status_code or "",
-                "是" if r.stream else "否",
-                "是" if r.usage_estimated else "否",
-                (r.error_detail or "").replace("\n", " ").replace("\r", " "),
-            ])
-        return csv_download(
-            [
-                "时间", "模型", "API Key", "部门", "Request ID",
-                "Prompt Tokens", "Completion Tokens", "总Token",
-                "缓存命中Token", "缓存未命中Token",
-                "TTFT(ms)", "整体耗时(ms)", "预估费用",
-                "状态码", "流式", "Token为估算值", "错误信息",
-            ],
-            csv_rows,
-            f"admin-usage-{now_local().strftime('%Y-%m-%d')}.csv",
-        )
+        return _export_admin_usage(db, conds, order_col, export_limit)
 
     total_q = select(func.count()).select_from(UsageLogORM)
     if conds:
@@ -514,78 +607,15 @@ def list_usage(
     rows = db.execute(
         select(UsageLogORM).where(*conds).order_by(order_col).offset(offset).limit(min(limit, 200))
     ).scalars().all()
-    key_ids = list({r.api_key_id for r in rows})
-    key_map: dict = {}
-    if key_ids:
-        for k in db.query(ApiKeyORM).filter(ApiKeyORM.id.in_(key_ids)).all():
-            key_map[k.id] = {"name": k.name or k.id[:8], "department": k.department or "", "auth_id": k.auth_id or ""}
-
-    # 统计：同样条件下聚合
-    stats = {"total": total, "success_count": 0, "success_rate": 0.0,
-             "avg_latency_ms": None, "p95_latency_ms": None,
-             "avg_duration_ms": None, "p95_duration_ms": None,
-             "cache_hit_tokens": 0, "cache_miss_tokens": 0, "cache_hit_rate": None}
-    if total > 0:
-        success = db.execute(
-            select(func.count()).select_from(UsageLogORM).where(*conds, UsageLogORM.status_code.like("2%"))
-        ).scalar() or 0
-        lat_row = db.execute(
-            select(func.avg(UsageLogORM.latency_ms),
-                   func.percentile_cont(0.95).within_group(UsageLogORM.latency_ms))
-            .where(*conds, UsageLogORM.latency_ms.isnot(None), UsageLogORM.latency_ms > 0)
-        ).one()
-        dur_row = db.execute(
-            select(func.avg(UsageLogORM.total_duration_ms),
-                   func.percentile_cont(0.95).within_group(UsageLogORM.total_duration_ms))
-            .where(*conds, UsageLogORM.total_duration_ms.isnot(None), UsageLogORM.total_duration_ms > 0)
-        ).one()
-        cache_row = db.execute(
-            select(func.coalesce(func.sum(UsageLogORM.cache_hit_tokens), 0),
-                   func.coalesce(func.sum(UsageLogORM.cache_miss_tokens), 0))
-            .where(*conds)
-        ).one()
-        cache_hit = int(cache_row[0] or 0)
-        cache_miss = int(cache_row[1] or 0)
-        cache_total = cache_hit + cache_miss
-        cost_row = db.execute(
-            select(func.coalesce(func.sum(UsageLogORM.estimated_cost), 0)).where(*conds)
-        ).one()
-        total_cost = round(float(cost_row[0] or 0), 6)
-        stats = {
-            "total": total, "success_count": success,
-            "success_rate": round(success / total * 100, 1),
-            "avg_latency_ms": round(lat_row[0]) if lat_row[0] is not None else None,
-            "p95_latency_ms": round(lat_row[1]) if lat_row[1] is not None else None,
-            "avg_duration_ms": round(dur_row[0]) if dur_row[0] is not None else None,
-            "p95_duration_ms": round(dur_row[1]) if dur_row[1] is not None else None,
-            "cache_hit_tokens": cache_hit, "cache_miss_tokens": cache_miss,
-            "cache_hit_rate": round(cache_hit / cache_total * 100, 1) if cache_total > 0 else None,
-            "total_cost": total_cost,
-        }
-
-    # 去重模型/部门列表（基于筛选结果）
-    model_rows = db.execute(
-        select(UsageLogORM.model_id).where(*conds).distinct().limit(1000)
-    ).scalars().all()
-    dept_rows = db.execute(
-        select(ApiKeyORM.department).join(UsageLogORM, UsageLogORM.api_key_id == ApiKeyORM.id)
-        .where(*conds).distinct().limit(200)
-    ).scalars().all()
-    key_name_rows = db.execute(
-        select(ApiKeyORM.name).join(UsageLogORM, UsageLogORM.api_key_id == ApiKeyORM.id)
-        .where(*conds).distinct().limit(500)
-    ).scalars().all()
+    key_map = _admin_usage_key_map(db, rows)
+    stats = _admin_usage_stats(db, conds, total)
 
     return {
         "total": total,
-        "records": [_row_dict(r, key_map) for r in rows],
+        "records": [_admin_usage_record(row, key_map) for row in rows],
         "stats": stats,
-        "unique_models": sorted(set(m for m in model_rows if m)),
-        "unique_departments": sorted(set(d for d in dept_rows if d)),
-        "unique_key_names": sorted(set(n for n in key_name_rows if n)),
-        "max_ttft_ms": int(db.execute(select(func.max(UsageLogORM.latency_ms))).scalar() or 0),
-        "max_duration_ms": int(db.execute(select(func.max(UsageLogORM.total_duration_ms))).scalar() or 0),
-        "max_total_tokens": int(db.execute(select(func.max(UsageLogORM.total_tokens))).scalar() or 0),
+        **_admin_usage_facets(db, conds),
+        **_admin_usage_maxima(db),
     }
 
 

@@ -33,11 +33,22 @@ npm run build
 npm audit --omit=dev
 ```
 
+Full-stack browser checks:
+
+```bash
+cd frontend
+npm run test:e2e
+```
+
 Before a public release:
 
 ```bash
 bash scripts/check-public-release.sh
 ```
+
+Push the release commit to the default branch and wait for all six CI jobs to
+succeed before creating and pushing `v<version>`. The tag workflow refuses to
+publish from an unverified commit.
 
 Security issues must follow [SECURITY.md](SECURITY.md), not the public issue
 tracker. Contributions are expected to include documentation for new settings

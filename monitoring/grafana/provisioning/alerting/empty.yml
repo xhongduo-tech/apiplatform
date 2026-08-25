@@ -1,0 +1,2 @@
+# Keep the alerting provisioning directory valid without shipping instance data.
+apiVersion: 1

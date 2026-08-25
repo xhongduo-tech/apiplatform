@@ -603,188 +603,195 @@ def upsert_model(model_id: str, payload: ModelUpsert, db: Session = Depends(get_
     return {"ok": True, "id": model_id}
 
 
-@router.patch("/models/{model_id}")
-def patch_model(model_id: str, body: dict = Body(...), db: Session = Depends(get_db), _=Depends(require_admin)):
-    """单模型更新（camelCase 与 snake_case 均兼容）。"""
-    # 前端发送 snake_case，统一补充 camelCase 别名，使后续条件判断无需修改。
-    # snake_case key 不覆盖已存在的 camelCase key（外部集成优先）。
-    _S2C = {
-        "base_url": "baseUrl", "model_api_name": "modelApiName",
-        "import_format": "importFormat", "custom_headers": "customHeaders",
-        "api_key": "apiKey",
-        "context_window": "contextWindow", "resolve_to_model_id": "resolveToModelId",
-        "pricing_input": "pricingInput", "pricing_output": "pricingOutput",
-        "short_desc": "shortDesc",
-        "readme": "readme",
-    }
-    for snake, camel in _S2C.items():
-        if snake in body and camel not in body:
-            body[camel] = body[snake]
+_MODEL_PATCH_ALIASES = {
+    "base_url": "baseUrl", "model_api_name": "modelApiName",
+    "import_format": "importFormat", "custom_headers": "customHeaders",
+    "api_key": "apiKey", "context_window": "contextWindow",
+    "resolve_to_model_id": "resolveToModelId", "pricing_input": "pricingInput",
+    "pricing_output": "pricingOutput", "short_desc": "shortDesc", "readme": "readme",
+}
+_MODEL_PATCH_FIELDS = {
+    "name": ("name", False), "provider": ("provider", False),
+    "description": ("description", False), "shortDesc": ("short_desc", True),
+    "readme": ("readme", True), "speed": ("speed", True),
+    "contextWindow": ("context_window", False), "category": ("category", False),
+    "modelApiName": ("model_api_name", True), "importFormat": ("import_format", False),
+    "resolveToModelId": ("resolve_to_model_id", True),
+    "pricingInput": ("pricing_input", False), "pricingOutput": ("pricing_output", False),
+}
 
+
+def _model_patch_body(body: dict) -> dict:
+    normalized = dict(body)
+    for snake, camel in _MODEL_PATCH_ALIASES.items():
+        if snake in normalized and camel not in normalized:
+            normalized[camel] = normalized[snake]
+    return normalized
+
+
+def _get_or_create_model(db: Session, model_id: str, body: dict) -> ModelRegistryORM:
     record = db.get(ModelRegistryORM, model_id)
-    if record is None:
-        record = ModelRegistryORM(
-            id=model_id,
-            name=body.get("name", model_id),
-            provider=body.get("provider", ""),
-            status=body.get("status", "online"),
-            category=body.get("category", "chat"),
-            import_format=body.get("importFormat", "openai"),
-        )
-        db.add(record)
+    if record is not None:
+        return record
+    record = ModelRegistryORM(
+        id=model_id,
+        name=body.get("name", model_id),
+        provider=body.get("provider", ""),
+        status=body.get("status", "online"),
+        category=body.get("category", "chat"),
+        import_format=body.get("importFormat", "openai"),
+    )
+    db.add(record)
+    return record
 
-    if "name" in body:
-        record.name = body["name"]
-    if "provider" in body:
-        record.provider = body["provider"]
-    if "description" in body:
-        record.description = body["description"]
-    if "shortDesc" in body:
-        record.short_desc = body["shortDesc"] or None
-    if "readme" in body:
-        record.readme = body["readme"] or None
-    if "speed" in body:
-        record.speed = body["speed"] or None
-    if "contextWindow" in body:
-        record.context_window = body["contextWindow"]
-    if "category" in body:
-        record.category = body["category"]
+
+def _apply_model_patch_fields(record: ModelRegistryORM, body: dict) -> None:
+    for body_key, (attribute, empty_is_none) in _MODEL_PATCH_FIELDS.items():
+        if body_key in body:
+            value = body[body_key] or None if empty_is_none else body[body_key]
+            setattr(record, attribute, value)
     if "status" in body:
-        if body["status"] in _VALID_STATUS:
-            record.status = body["status"]
-        else:
+        if body["status"] not in _VALID_STATUS:
             raise HTTPException(status_code=400, detail=f"非法状态值：{body['status']}")
+        record.status = body["status"]
     if "baseUrl" in body:
         record.base_url = _validate_base_url_scheme(body["baseUrl"], where="base_url")
-    if "modelApiName" in body:
-        record.model_api_name = body["modelApiName"] or None
-    if "importFormat" in body:
-        record.import_format = body["importFormat"]
     if "customHeaders" in body:
         record.custom_headers = _updated_custom_headers(
             body["customHeaders"], record.custom_headers, where="custom_headers",
         )
     if body.get("apiKey") and body["apiKey"] != MASKED_SECRET:
         record.api_key = body["apiKey"]
-    if "resolveToModelId" in body:
-        record.resolve_to_model_id = body["resolveToModelId"] or None
-    if "pricingInput" in body:
-        record.pricing_input = body["pricingInput"]
-    if "pricingOutput" in body:
-        record.pricing_output = body["pricingOutput"]
 
-    extra_updates: dict = {}
-    if "badge" in body:
-        extra_updates["badge"] = body["badge"] or None
-    if "tags" in body:
-        extra_updates["tags"] = body["tags"] if isinstance(body["tags"], list) else (body["tags"] or None)
-    if "addedAt" in body:
-        # 平台接入日期 YYYY-MM-DD（模型广场「最新」排序与卡片展示）
-        extra_updates["addedAt"] = body["addedAt"] or None
-    if "releaseDate" in body:
-        # 模型原始发布日期 YYYY-MM
-        extra_updates["releaseDate"] = body["releaseDate"] or None
-    if "params" in body:
-        extra_updates["params"] = body["params"] or None
+
+def _model_extra_updates(
+    db: Session, model_id: str, record: ModelRegistryORM, body: dict,
+) -> dict:
+    updates = {
+        target: body[source] or None
+        for source, target in {
+            "badge": "badge", "tags": "tags", "addedAt": "addedAt",
+            "releaseDate": "releaseDate", "params": "params", "upstreamPath": "upstream_path",
+        }.items()
+        if source in body
+    }
     if "callNames" in body or "call_names" in body:
         names = _normalize_call_names(body.get("callNames", body.get("call_names")))
         _assert_call_names_available(db, model_id, names)
-        extra_updates["call_names"] = names
-    if "upstreamPath" in body:
-        # 单节点模型的上游路径覆盖：留空则清除（回退到 suffix 默认值）
-        extra_updates["upstream_path"] = body["upstreamPath"] or None
+        updates["call_names"] = names
     if "engineType" in body:
-        et = (body["engineType"] or "").strip().lower()
-        extra_updates["engine_type"] = et if et in ("vllm", "llamacpp", "llama.cpp", "llama-cpp") else None
+        engine_type = (body["engineType"] or "").strip().lower()
+        allowed = {"vllm", "llamacpp", "llama.cpp", "llama-cpp"}
+        updates["engine_type"] = engine_type if engine_type in allowed else None
     if "fallback" in body:
-        # None / 非 dict → 清除兜底配置（_merge_extra 对 None 值执行 pop）
-        extra_updates["fallback"] = _normalize_fallback(db, model_id, record, body["fallback"])
+        updates["fallback"] = _normalize_fallback(db, model_id, record, body["fallback"])
+    return updates
+
+
+def _apply_model_scene_patch(record: ModelRegistryORM, body: dict) -> None:
+    if not any(key in body for key in ("scenes", "scene", "autoApprove")):
+        return
+    scenes = body.get("scenes") if "scenes" in body else None
+    scene = body.get("scene") if "scene" in body else None
+    if isinstance(scenes, list) and scenes:
+        scene = scenes[0]
+    record.extra = _merge_extra(record.extra, {
+        "scenes": scenes,
+        "scene": scene,
+        "autoApprove": body.get("autoApprove") if "autoApprove" in body else None,
+    })
+
+
+def _endpoint_index(extra: dict) -> dict[str, dict]:
+    old = extra.get("endpoints") if isinstance(extra.get("endpoints"), list) else []
+    result: dict[str, dict] = {}
+    for endpoint in old:
+        if not isinstance(endpoint, dict):
+            continue
+        url = str(endpoint.get("base_url") or endpoint.get("baseUrl") or "").strip()
+        if url:
+            result[url] = endpoint
+    return result
+
+
+def _endpoint_weight(value) -> int:
+    try:
+        return max(1, int(value or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _normalize_model_endpoint(endpoint: dict, old_by_url: dict[str, dict]) -> dict:
+    url = _validate_base_url_scheme(
+        endpoint.get("base_url") or endpoint.get("baseUrl"), where="endpoint.base_url",
+    ) or ""
+    old = old_by_url.get(url, {})
+    old_key = old.get("api_key") or old.get("apiKey")
+    supplied_key = endpoint.get("api_key") if "api_key" in endpoint else endpoint.get("apiKey")
+    api_key = old_key if supplied_key in (None, "", MASKED_SECRET) else supplied_key
+    has_headers = "custom_headers" in endpoint or "customHeaders" in endpoint
+    old_headers = old.get("custom_headers") or old.get("customHeaders")
+    raw_headers = endpoint.get("custom_headers") if "custom_headers" in endpoint else endpoint.get("customHeaders")
+    custom_headers = (
+        _updated_custom_headers(raw_headers, old_headers, where="endpoint.custom_headers")
+        if has_headers else old_headers
+    )
+    return {
+        "label": endpoint.get("label") or None,
+        "base_url": url,
+        "model_api_name": endpoint.get("model_api_name") or endpoint.get("modelApiName") or None,
+        "api_key": api_key,
+        "import_format": endpoint.get("import_format") or endpoint.get("importFormat") or "openai",
+        "custom_headers": custom_headers,
+        "upstream_path": endpoint.get("upstream_path") or endpoint.get("upstreamPath") or None,
+        "weight": _endpoint_weight(endpoint.get("weight")),
+    }
+
+
+def _apply_primary_endpoint(record: ModelRegistryORM, extra: dict, primary: dict) -> None:
+    record.base_url = primary["base_url"] or None
+    record.model_api_name = primary["model_api_name"] or None
+    record.import_format = primary["import_format"] or "openai"
+    record.custom_headers = primary["custom_headers"] or None
+    if primary["api_key"]:
+        record.api_key = primary["api_key"]
+    if primary["upstream_path"]:
+        extra["upstream_path"] = primary["upstream_path"]
+    else:
+        extra.pop("upstream_path", None)
+
+
+def _apply_model_endpoints_patch(record: ModelRegistryORM, body: dict) -> None:
+    if "endpoints" not in body:
+        return
+    extra = dict(record.extra) if isinstance(record.extra, dict) else {}
+    old_by_url = _endpoint_index(extra)
+    raw_endpoints = body.get("endpoints") or []
+    candidates = [
+        endpoint for endpoint in raw_endpoints
+        if isinstance(endpoint, dict)
+        and (endpoint.get("base_url") or endpoint.get("baseUrl") or "").strip()
+    ]
+    endpoints = [_normalize_model_endpoint(endpoint, old_by_url) for endpoint in candidates]
+    if endpoints:
+        extra["endpoints"] = endpoints
+        _apply_primary_endpoint(record, extra, endpoints[0])
+    else:
+        extra.pop("endpoints", None)
+    record.extra = extra
+
+
+@router.patch("/models/{model_id}")
+def patch_model(model_id: str, body: dict = Body(...), db: Session = Depends(get_db), _=Depends(require_admin)):
+    """更新一个模型；解析、字段更新与端点归一化分层处理。"""
+    body = _model_patch_body(body)
+    record = _get_or_create_model(db, model_id, body)
+    _apply_model_patch_fields(record, body)
+    extra_updates = _model_extra_updates(db, model_id, record, body)
     if extra_updates:
         record.extra = _merge_extra(record.extra, extra_updates)
-
-    if "scenes" in body or "scene" in body or "autoApprove" in body:
-        scenes = body.get("scenes") if "scenes" in body else None
-        scene = body.get("scene") if "scene" in body else None
-        if isinstance(scenes, list) and scenes:
-            scene = scenes[0]
-        record.extra = _merge_extra(record.extra, {
-            "scenes": scenes,
-            "scene": scene,
-            "autoApprove": body.get("autoApprove") if "autoApprove" in body else None,
-        })
-
-    if "endpoints" in body:
-        raw_eps = body.get("endpoints") or []
-        extra = dict(record.extra) if isinstance(record.extra, dict) else {}
-        # 编辑器出于安全不回显密钥原文，api_key 留空表示"保持不变"——
-        # 按 base_url 匹配已存储节点，沿用其密钥，避免每次保存都清空。
-        old_eps = extra.get("endpoints") if isinstance(extra.get("endpoints"), list) else []
-        old_ep_by_url: dict[str, dict] = {}
-        for oe in old_eps:
-            if isinstance(oe, dict):
-                u = str(oe.get("base_url") or oe.get("baseUrl") or "").strip()
-                if u:
-                    old_ep_by_url[u] = oe
-
-        # 接受 camelCase / snake_case 两种 key，统一规范化为 snake_case 存储
-        # 避免路由层 _valid_endpoints() 读取 base_url 时因 key 不一致而拿到空列表
-        def _norm_ep(e: dict) -> dict:
-            url = _validate_base_url_scheme(
-                e.get("base_url") or e.get("baseUrl"),
-                where="endpoint.base_url",
-            ) or ""
-            old_ep = old_ep_by_url.get(url, {})
-            old_key = old_ep.get("api_key") or old_ep.get("apiKey")
-            supplied_key = e.get("api_key") if "api_key" in e else e.get("apiKey")
-            api_key = (
-                old_key
-                if supplied_key in (None, "", MASKED_SECRET)
-                else supplied_key
-            )
-            has_headers = "custom_headers" in e or "customHeaders" in e
-            old_headers = old_ep.get("custom_headers") or old_ep.get("customHeaders")
-            raw_headers = e.get("custom_headers") if "custom_headers" in e else e.get("customHeaders")
-            custom_headers = (
-                _updated_custom_headers(
-                    raw_headers, old_headers, where="endpoint.custom_headers",
-                )
-                if has_headers else old_headers
-            )
-            # 权重：控制该节点在加权轮询中的流量配比，缺失/非法回落 1（均分）
-            try:
-                weight = int(e.get("weight") or 1)
-            except (TypeError, ValueError):
-                weight = 1
-            if weight < 1:
-                weight = 1
-            return {
-                "label":           e.get("label") or None,
-                "base_url":        url,
-                "model_api_name":  e.get("model_api_name") or e.get("modelApiName") or None,
-                "api_key":         api_key,
-                "import_format":   e.get("import_format") or e.get("importFormat") or "openai",
-                "custom_headers":  custom_headers,
-                "upstream_path":   e.get("upstream_path") or e.get("upstreamPath") or None,
-                "weight":          weight,
-            }
-        endpoints = [_norm_ep(e) for e in raw_eps if isinstance(e, dict)
-                     and (e.get("base_url") or e.get("baseUrl") or "").strip()]
-        if endpoints:
-            extra["endpoints"] = endpoints
-            primary = endpoints[0]
-            record.base_url = primary["base_url"] or None
-            record.model_api_name = primary["model_api_name"] or None
-            record.import_format = primary["import_format"] or "openai"
-            record.custom_headers = primary["custom_headers"] or None
-            if primary["api_key"]:
-                record.api_key = primary["api_key"]
-            if primary["upstream_path"]:
-                extra["upstream_path"] = primary["upstream_path"]
-            else:
-                extra.pop("upstream_path", None)
-        else:
-            extra.pop("endpoints", None)
-        record.extra = extra
+    _apply_model_scene_patch(record, body)
+    _apply_model_endpoints_patch(record, body)
 
     _audit(db, "admin", "model.patch", model_id)
     db.commit()

@@ -38,3 +38,13 @@ deleted from the current checkout. Complete every item below for each release.
 - [ ] Mobile navigation, keyboard operation and contrast are checked.
 - [ ] Images are built reproducibly, scanned, accompanied by an SBOM and signed.
 - [ ] `CHANGELOG.md`, support window and upgrade notes are complete.
+- [ ] Both GHCR packages are linked to this repository and have `public`
+      visibility, so the documented Docker deployment works anonymously.
+
+GitHub Container Registry packages created under a personal account are private
+by default even when they are linked to a public repository. On the first
+release, the image publication job therefore stops before signing and before it
+creates a GitHub Release. Open each new package's settings, confirm the source
+repository link, change its visibility to **Public**, and rerun the failed job.
+This visibility change cannot be reversed. Later releases reuse the already
+public packages and pass the gate automatically.

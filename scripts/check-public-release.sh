@@ -14,6 +14,28 @@ if [[ ! -f LICENSE && ! -f LICENSE.md ]]; then
   failed=1
 fi
 
+echo "▶ 检查开源/商业版文件边界"
+if [[ ! -f EDITION.json ]] || ! python3 - <<'PY'
+import json
+from pathlib import Path
+
+edition = json.loads(Path("EDITION.json").read_text(encoding="utf-8"))
+assert edition.get("edition") == "community"
+assert edition.get("repositoryVisibility") == "public"
+assert edition.get("license") == "Apache-2.0"
+assert edition.get("commercialSourceIncluded") is False
+assert str(edition.get("extensionApi", "")) == "1"
+PY
+then
+  echo "✗ EDITION.json 未明确声明公开 Apache-2.0 社区版边界" >&2
+  failed=1
+fi
+if git ls-files 'enterprise/**' 'commercial/**' 'proprietary/**' | grep -q .; then
+  echo "✗ 公开仓库中出现企业版源码目录；商业实现必须留在私有仓库" >&2
+  git ls-files 'enterprise/**' 'commercial/**' 'proprietary/**' >&2
+  failed=1
+fi
+
 echo "▶ 检查私钥标记"
 if rg -n --with-filename --hidden -S \
   -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \

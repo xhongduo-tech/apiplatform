@@ -30,6 +30,13 @@ class Settings:
     # ── 环境 ──────────────────────────────────────────────────────────────
     # production（默认，容器部署）；dev.sh 本地开发注入 development。
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production").strip().lower()
+    # 生产默认不暴露交互式 API 文档；发布包提供经过审查的静态网关规范。
+    API_DOCS_ENABLED: bool = _b("API_DOCS_ENABLED", ENVIRONMENT != "production")
+
+    # ── 可选应用扩展 ────────────────────────────────────────────────────────
+    # 仅加载部署方显式列出的 Python 模块；顺序即安装/启动顺序。空值保持纯社区版
+    # 行为。任何已配置扩展的导入、契约、安装或启动失败都会阻止应用就绪。
+    APPLICATION_EXTENSIONS: str = os.getenv("APPLICATION_EXTENSIONS", "").strip()
 
     # ── 基础 ────────────────────────────────────────────────────────────
     # 下面两个默认值仅支持 development；production 启动时会由 main.py 校验

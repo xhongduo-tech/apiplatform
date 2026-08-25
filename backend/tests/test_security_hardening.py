@@ -19,6 +19,7 @@ def client():
 def test_admin_login_lockout(requires_db, client: TestClient, monkeypatch):
     """连续失败达到阈值 → 429 锁定；成功登录清除计数。"""
     from app.admin_credentials import AdminAuthentication
+    from app import auth_rate_limit
     from app.routers import admin as admin_router
     from app.routers.admin import _ADMIN_LOGIN_MAX_FAILURES
 
@@ -62,7 +63,11 @@ def test_admin_login_lockout(requires_db, client: TestClient, monkeypatch):
             for key in keys:
                 self.values.pop(key, None)
 
-    monkeypatch.setattr(admin_router, "redis", _Redis())
+    isolated_redis = _Redis()
+    monkeypatch.setattr(admin_router, "redis", isolated_redis)
+    # enforce_auth_rate owns its Redis import independently from the router.
+    # Keep this test hermetic even when a real development Redis is reachable.
+    monkeypatch.setattr(auth_rate_limit, "redis", isolated_redis)
 
     # 锁定测试只关心失败计数，不依赖全局管理员是否已完成首次设密。
     monkeypatch.setattr(

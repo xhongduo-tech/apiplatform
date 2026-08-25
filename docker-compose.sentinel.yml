@@ -24,7 +24,7 @@
 # ============================================================================
 
 x-sentinel-common: &sentinel-common
-  image: ${REDIS_IMAGE:-redis:7-alpine}
+  image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
   restart: unless-stopped
   depends_on:
     redis:
@@ -48,7 +48,7 @@ x-sentinel-common: &sentinel-common
 
 services:
   redis-replica:
-    image: ${REDIS_IMAGE:-redis:7-alpine}
+    image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     # 与主库同一口令：masterauth 用于同步，requirepass 保证故障切换后

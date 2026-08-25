@@ -133,7 +133,7 @@ image_arch() {
 echo "▶ 校验镜像架构"
 EXPECT="${TARGET_PLATFORM:-linux/amd64}"
 
-images_to_check=(apiplatform-backend:latest apiplatform-nginx:latest apiplatform-postgres:16-alpine apiplatform-redis:7-alpine apiplatform-prometheus:v2.53.0 apiplatform-grafana:11.1.0)
+images_to_check=(apiplatform-backend:latest apiplatform-nginx:latest apiplatform-postgres:16-alpine apiplatform-redis:7-alpine apiplatform-prometheus:v3.13.2 apiplatform-grafana:13.2.0)
 
 for name in "${images_to_check[@]}"; do
   if ! docker image inspect "${name}" >/dev/null 2>&1; then

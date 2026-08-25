@@ -1,0 +1,8 @@
+{
+  "edition": "community",
+  "repositoryVisibility": "public",
+  "license": "Apache-2.0",
+  "commercialSourceIncluded": false,
+  "extensionApi": "1",
+  "sourceBoundary": "Every project-authored file in this repository is part of the open-source Community edition. Proprietary Enterprise source belongs in the separate private apiplatform-enterprise repository."
+}

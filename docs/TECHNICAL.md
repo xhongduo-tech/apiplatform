@@ -562,7 +562,7 @@ cost = round((prompt_tokens * pin + completion_tokens * pout) / 1_000_000, 6)
 | `AUTH_CACHE_TTL_S` | 3.0 | 热路径鉴权缓存 |
 | `RATE_LIMIT_RPM` / `RATE_LIMIT_TPM` | 600 / 6,000,000 | 平台默认，可按 Key 覆盖 |
 | `RATE_LIMIT_HIGH_RPM` / `RATE_LIMIT_HIGH_TPM` | 3,000 / 60,000,000 | 「高并发」一键档位预设值 |
-| `GUNICORN_WORKERS` / `HTTPX_MAX_CONNECTIONS` | 4 / 10,000 | |
+| `GUNICORN_WORKERS` / `HTTPX_MAX_CONNECTIONS` | 4 / 256 | |
 | `UPSTREAM_CONNECT_TIMEOUT_S` / `UPSTREAM_READ_TIMEOUT_S` | 10 / 600 | |
 | `USAGE_LOG_RETENTION_DAYS` | 90 | |
 | `OPS_REPORT_ENABLED` | false | 运营日报开关 |
@@ -583,8 +583,14 @@ cost = round((prompt_tokens * pin + completion_tokens * pout) / 1_000_000, 6)
 ### 13.2 在线部署
 
 ```bash
-docker compose -f docker-compose.app.yml up -d
+cp .env.example .env
+# 填写所有必填随机密钥后：
+docker compose --env-file .env config
+docker compose --env-file .env up -d --build --wait
 ```
+
+`docker-compose.yml` 是源码构建入口；`docker-compose.app.yml` 保留给预构建镜像与
+离线包。两者共享相同的运行时安全、健康检查、持久卷与日志轮换配置。
 
 ### 13.3 离线部署
 

@@ -1,0 +1,3 @@
+# Keep the plugin provisioning directory valid without installing external plugins.
+apiVersion: 1
+apps: []

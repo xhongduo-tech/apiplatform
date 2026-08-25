@@ -8,28 +8,49 @@ on:
     branches: [main, master]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release-hygiene:
+    name: Release hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: 开源发布卫生检查
         run: bash scripts/check-public-release.sh
+      - name: Version markers stay synchronized
+        run: python scripts/check-version-sync.py
+      - name: Validate Docker Compose manifests
+        env:
+          POSTGRES_PASSWORD: compose-validation-postgres-password
+          REDIS_PASSWORD: compose-validation-redis-password
+          JWT_SECRET: compose-validation-jwt-secret-at-least-32-characters
+          DATA_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.app.yml config -q
+          docker compose -f docker-compose.app.yml -f docker-compose.sentinel.yml config -q
       - name: Git history secret scan
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dependency-security:
+    name: Dependency security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: npm
@@ -45,12 +66,13 @@ jobs:
           npm audit --omit=dev --audit-level=high
 
   backend:
+    name: Backend
     runs-on: ubuntu-latest
     # 绝大多数用例是纯逻辑单测；论坛等少数集成用例要查真库，由这里的 service
     # 提供（不可达时 conftest 的 requires_db 会 skip，不会伪装成失败）。
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_USER: platform
           POSTGRES_PASSWORD: platform_ci_postgres
@@ -63,8 +85,10 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
       - name: 安装依赖
@@ -74,10 +98,12 @@ jobs:
           pip install -r requirements-dev.txt
       - name: 语法检查
         working-directory: backend
-        run: python -m py_compile $(find app -name "*.py")
+        run: find app -name "*.py" -print0 | xargs -0 python -m py_compile
       - name: Lint (ruff)
         working-directory: backend
         run: python -m ruff check app tests ../scripts
+      - name: Public OpenAPI export is current
+        run: python scripts/export-openapi.py --check
       - name: 空库迁移到 head
         working-directory: backend
         env:
@@ -102,10 +128,13 @@ jobs:
         run: python -m pytest -q --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=60
 
   frontend:
+    name: Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: npm
@@ -138,17 +167,97 @@ jobs:
           fi
           echo "✓ 离线自检通过"
 
-  container-security:
+  e2e:
+    name: Full-stack browser E2E
     runs-on: ubuntu-latest
-    needs: [backend, frontend, dependency-security]
+    needs: [backend, frontend]
+    env:
+      COMPOSE_PROJECT_NAME: apiplatform-e2e
+      BACKEND_IMAGE: apiplatform-backend:e2e
+      NGINX_IMAGE: apiplatform-nginx:e2e
+      POSTGRES_PASSWORD: e2e-postgres-password-release-check
+      REDIS_PASSWORD: e2e-redis-password-release-check
+      JWT_SECRET: e2e-jwt-secret-release-check-at-least-32-characters
+      DATA_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+      ADMIN_BOOTSTRAP_TOKEN: e2e-bootstrap-token-release-check-2026
+      SESSION_COOKIE_SECURE: "false"
+      DEMO_DATA_ENABLED: "false"
+      HTTP_PORT: "18080"
+      POSTGRES_PORT: "65432"
+      REDIS_PORT: "6399"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install browser test dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Build application images
+        run: |
+          docker build -t "$BACKEND_IMAGE" backend
+          docker build -t "$NGINX_IMAGE" -f nginx/Dockerfile .
+      - name: Start isolated full stack
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml
+          up -d postgres redis mock-upstream backend nginx
+      - name: Wait for gateway readiness
+        run: |
+          for _ in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18080/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs
+          exit 1
+      - name: Run release-critical browser flows
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:18080
+        run: npm run test:e2e
+      - name: Capture E2E service logs
+        if: always()
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml
+          logs --no-color > e2e-compose.log 2>&1
+      - name: Upload E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-diagnostics
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+            e2e-compose.log
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Stop isolated full stack
+        if: always()
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml
+          down --volumes --remove-orphans
+
+  container-security:
+    name: Container security
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, e2e, dependency-security]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Build backend image
         run: docker build -t apiplatform-backend:ci backend
       - name: Build web image
         run: docker build -t apiplatform-nginx:ci -f nginx/Dockerfile .
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           image-ref: apiplatform-backend:ci
           format: table
@@ -156,7 +265,7 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
       - name: Scan web image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           image-ref: apiplatform-nginx:ci
           format: table
@@ -164,12 +273,12 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
       - name: Generate backend SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: apiplatform-backend:ci
           artifact-name: apiplatform-backend-sbom.spdx.json
       - name: Generate web SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: apiplatform-nginx:ci
           artifact-name: apiplatform-nginx-sbom.spdx.json

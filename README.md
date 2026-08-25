@@ -1,113 +1,301 @@
+<div align="center">
+
 # Open API Platform
 
-一个可自主部署、面向多模型供应商的大模型 API 网关与运营平台。平台提供 OpenAI / Anthropic 兼容接口，并将模型接入、密钥发放、流量治理、用量分析、基础设施状态和运营管理整合到同一套控制台中。
+**A self-hosted, multi-provider LLM API gateway and operations console.**
 
-本开源快照不包含原内部系统的真实用户、API Key、请求日志、上游凭据、组织信息或基础设施拓扑。新实例可选择载入完全虚构的演示汇总数据；其中的演示 Key 均不可调用。
+Expose OpenAI- and Anthropic-compatible endpoints while keeping model routing,
+credentials, usage analytics, traffic governance, and platform operations under
+your control.
 
-## 核心能力
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-2563EB?style=flat-square)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white)
+![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
+![OpenAI compatible](https://img.shields.io/badge/API-OpenAI%20compatible-111827?style=flat-square)
+![Anthropic compatible](https://img.shields.io/badge/API-Anthropic%20compatible-D97706?style=flat-square)
 
-- OpenAI Chat Completions、Completions、Responses 与 Anthropic Messages 兼容接口。
-- FastAPI 异步流式中继，支持 SSE、模型路由、故障转移、熔断和多节点轮询。
-- PostgreSQL 持久化与 Redis 跨实例 RPM / TPM 限流。
-- 模型、API Key、用户、申请、场景、报表、审计日志和运行状态管理。
-- 用户控制台、管理后台、公开文档与匿名状态看板。
-- 平台名、品牌名、组织、页脚、支持/审批部门和联系信息均由管理员配置。
-- 本地账户使用强密码、登录限流与 HttpOnly 会话 Cookie；API 客户端仍可使用 Bearer JWT。
-- 敏感配置使用 AES-256-GCM 加密，API Key 明文只在领取或重新生成时返回一次。
-- Docker Compose、自动校验备份、Prometheus / Grafana 监控与全离线部署包。
+[Quick start](#quick-start) ·
+[Features](#features) ·
+[API compatibility](#api-compatibility) ·
+[Production deployment](#production-deployment) ·
+[Editions](#community-and-enterprise-editions) ·
+[Documentation](#documentation) ·
+[Contributing](#contributing)
 
-## 架构概览
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-```text
-Browser / SDK
-      │
-      ▼
-    Nginx ─────────────── React 控制台与管理后台
-      │
-      ▼
- FastAPI Gateway ─────── Redis（限流、缓存、跨节点状态）
-      │  │
-      │  └────────────── PostgreSQL（配置、账户、用量、审计）
-      │
-      └───────────────── OpenAI / Anthropic 兼容上游
+</div>
+
+> [!IMPORTANT]
+> This public snapshot contains no real users, API keys, request logs, upstream
+> credentials, organization names, or infrastructure topology from the former
+> internal deployment. Optional demo data is entirely fictional and all demo
+> keys are non-functional.
+
+## Community and Enterprise editions
+
+This repository is the **public Apache-2.0 Community edition**. Every
+project-authored file stored here is open-source; it contains no proprietary
+Enterprise implementation. Commercial capabilities are developed in a
+separate private `apiplatform-enterprise` repository that depends on versioned
+Community releases through the optional extension API.
+
+The exact ownership, licensing, compatibility, and change-flow rules are
+documented in [Community and Enterprise edition boundaries](docs/EDITION_BOUNDARIES.md)
+and machine-readable [EDITION.json](EDITION.json).
+
+## Why Open API Platform?
+
+Teams often need more than a reverse proxy when exposing multiple LLMs. Open
+API Platform combines the data plane and the operational control plane in one
+self-hosted stack:
+
+| Unified access | Governance | Operations | Deploy anywhere |
+| --- | --- | --- | --- |
+| OpenAI and Anthropic compatible APIs, streaming SSE, provider-independent model IDs | Per-key RPM/TPM limits, fallback, circuit breaking, audit logs, controlled key delivery | User and admin consoles, usage analytics, health views, reports, Prometheus and Grafana | Docker Compose, loopback-safe defaults, verified PostgreSQL backups, offline deployment bundles |
+
+## Features
+
+- **Multi-provider gateway** — relay Chat Completions, Completions, Responses,
+  Embeddings, Models, and Anthropic Messages through a consistent endpoint.
+- **Streaming and resilience** — asynchronous SSE relay, routing, fallback,
+  optional circuit breaking, connection budgets, and multi-node state.
+- **Key and account lifecycle** — issue, claim, regenerate, revoke, and restore
+  API keys without retaining recoverable client-key plaintext.
+- **Traffic governance** — Redis-backed cross-instance RPM/TPM enforcement with
+  per-key overrides and explicit failover behavior.
+- **Operational visibility** — request metadata, token and latency statistics,
+  heatmaps, reports, audit logs, Prometheus metrics, and Grafana dashboards.
+- **Configurable branding** — platform name, organization, support and approval
+  teams, contact details, footer, and localized copy are managed in the admin
+  console rather than compiled into the frontend.
+- **Hardened local authentication** — first-admin claim, strong passwords,
+  rate-limited login, HttpOnly cookies, and server-side session invalidation.
+- **Private and offline deployment** — self-contained fonts and assets,
+  hardened containers, sanitized demo data, and air-gapped image bundles.
+
+## API compatibility
+
+| API style | Endpoint | Streaming |
+| --- | --- | :---: |
+| OpenAI Chat Completions | `POST /v1/chat/completions` | Yes |
+| OpenAI Completions | `POST /v1/completions` | Yes |
+| OpenAI Responses | `POST /v1/responses` | Yes |
+| OpenAI Embeddings | `POST /v1/embeddings` | No |
+| OpenAI Models | `GET /v1/models` | — |
+| Anthropic Messages | `POST /v1/messages` | Yes |
+| Anthropic token counting | `POST /v1/messages/count_tokens` | No |
+
+Compatibility covers the gateway contract implemented by this project; it does
+not imply support for every provider-specific extension.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C[Browser / SDK] --> N[Nginx]
+    N --> W[React user and admin consoles]
+    N --> G[FastAPI gateway]
+    G --> R[(Redis)]
+    G --> P[(PostgreSQL)]
+    G --> U[OpenAI / Anthropic compatible upstreams]
+    P --> B[Verified backup sidecar]
+    G --> M[Prometheus]
+    M --> D[Grafana]
 ```
 
-详细设计见 [技术说明](docs/TECHNICAL.md)。
+Nginx serves the web applications and proxies API traffic. FastAPI owns
+authentication, routing, governance, and relay behavior. PostgreSQL stores
+configuration and durable operational data; Redis coordinates rate limits,
+caches, and cross-worker state.
 
-## 快速开始
+See [Technical architecture](docs/TECHNICAL.md) for implementation details.
 
-开发环境需要 Docker、Python 3.11+ 和 Node.js 20+：
+## Quick start
+
+### Prerequisites
+
+- Docker with Docker Compose
+- Python 3.11 or later
+- Node.js 20 or later
+
+Start the development stack:
 
 ```bash
 ./dev.sh
-./dev.sh --status
-./dev.sh --stop
 ```
 
-开发脚本只使用明确标记为 development 的本地凭据。生产配置会拒绝空值、弱值和仓库示例值。
+The script prepares PostgreSQL, Redis, the Python environment, database
+migrations, the FastAPI server, and the Vite frontend.
 
-## 生产部署
+| Service | Local address |
+| --- | --- |
+| Web console | <http://localhost:5173> |
+| Admin console | <http://localhost:5173/admin.html> |
+| Backend health | <http://localhost:8010/health> |
 
-### 1. 准备配置
+```bash
+./dev.sh --status    # inspect local services
+./dev.sh --logs      # follow backend logs
+./dev.sh --stop      # stop app processes and development Redis
+```
 
-复制环境变量模板：
+> [!NOTE]
+> Development credentials are intentionally marked as local-only. Production
+> startup rejects missing, weak, or repository example secrets.
+
+## Production deployment
+
+The repository includes two Compose entry points:
+
+| File | Use case | Command |
+| --- | --- | --- |
+| `docker-compose.yml` | Build the backend and web images from a source checkout | `docker compose up -d --build --wait` |
+| `docker-compose.app.yml` | Run prebuilt release images or an offline bundle | `docker compose -f docker-compose.app.yml up -d --wait` |
+
+The standard source deployment starts Nginx, FastAPI, PostgreSQL, Redis,
+hourly verified backups, Prometheus, and Grafana. Persistent state is kept in
+Compose-managed volumes and is not stored in the source checkout.
+
+### 1. Create the environment file
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env`，至少为以下项目生成彼此独立的随机值：
+Generate a different random value for each of `POSTGRES_PASSWORD`,
+`REDIS_PASSWORD`, `JWT_SECRET`, and `ADMIN_BOOTSTRAP_TOKEN`:
 
 ```bash
-# POSTGRES_PASSWORD、REDIS_PASSWORD、JWT_SECRET、ADMIN_BOOTSTRAP_TOKEN 分别生成一次
 openssl rand -hex 32
+```
 
-# DATA_ENCRYPTION_KEY 必须是独立的 32 字节 URL-safe base64
+Generate the independent 32-byte URL-safe key used for encrypted database
+fields:
+
+```bash
 openssl rand -base64 32 | tr '/+' '_-' | tr -d '=\n'
 ```
 
-不要提交 `.env`，也不要复用数据库密码、JWT 密钥与数据加密密钥。接入 HTTPS 后，将 `SESSION_COOKIE_SECURE` 改为 `true`。
+Store the result as `DATA_ENCRYPTION_KEY`. Never reuse a database password,
+JWT secret, or encryption key, and never commit `.env`.
 
-### 2. 构建并启动
+For a blank production instance, change `DEMO_DATA_ENABLED=false`. Keep
+`HTTP_BIND_ADDRESS=127.0.0.1` until the first administrator is claimed.
+
+### 2. Validate, build, and start with Docker Compose
 
 ```bash
-docker build -t apiplatform-backend:latest ./backend
-docker build -f nginx/Dockerfile \
-  --build-arg VITE_PUBLIC_API_ORIGIN=http://localhost \
-  -t apiplatform-nginx:latest .
-docker compose --env-file .env -f docker-compose.app.yml up -d
+# Resolve the complete configuration and fail before building if a required
+# variable is missing or empty.
+docker compose --env-file .env config >/dev/null
+
+# Build the two project images, start the complete stack, and wait for health.
+docker compose --env-file .env up -d --build --wait
+
+docker compose ps
+curl --fail http://127.0.0.1/health
 ```
 
-默认入口：
+If your Compose release does not support `--wait`, omit it and run
+`docker compose ps` until `postgres`, `redis`, `backend`, and `nginx` are
+healthy. The backend automatically serializes and applies Alembic migrations;
+do not run a separate first-start seed command. If `HTTP_PORT` is not `80`,
+include the configured port in the health URL.
 
-- 用户站点：`http://127.0.0.1/`
-- 管理后台：`http://127.0.0.1/admin.html`
-- 健康检查：`http://127.0.0.1/health`
-- Prometheus：`http://127.0.0.1:9090`
-- Grafana：`http://127.0.0.1:3000`
+The default production endpoints bind to `127.0.0.1`:
 
-数据库、Redis、监控和 Web 入口默认只绑定宿主机回环地址。完成初始化后，再通过受控反向代理、指定管理网地址或显式修改 `HTTP_BIND_ADDRESS` 对外提供服务。
+| Service | Default address |
+| --- | --- |
+| Web console | <http://127.0.0.1/> |
+| Admin console | <http://127.0.0.1/admin.html> |
+| Health check | <http://127.0.0.1/health> |
+| Prometheus | <http://127.0.0.1:9090> |
+| Grafana | <http://127.0.0.1:3000> |
 
-### 3. 首次管理员认领
+Keep the deployment on loopback until administrator bootstrap is complete.
+Then expose it through a trusted TLS reverse proxy, a specific management
+network address, or an explicit `HTTP_BIND_ADDRESS`.
 
-发行版不携带固定 admin 密码。首次打开 `/admin.html` 时，由管理员设置并确认强密码；数据库只保存版本化 PBKDF2-SHA256 哈希。
+### 3. Operate and upgrade the stack
 
-建议在 `.env` 配置一次性 `ADMIN_BOOTSTRAP_TOKEN`。首次认领必须同时提供此令牌，认领成功后它不再参与登录。该流程使用数据库锁保证并发安全，新实例应在本机或受信网络完成认领后再开放入口。
+```bash
+# Follow application logs without printing the complete history.
+docker compose logs -f --tail=200 backend nginx
 
-### 4. 平台配置
+# Rebuild after updating the source checkout and roll services forward.
+docker compose build --pull backend nginx
+docker compose up -d --wait --remove-orphans
 
-登录管理后台后，可在「品牌配置」中设置：
+# Stop containers while retaining databases, backups, and dashboards.
+docker compose down
+```
 
-- 平台名称、简称与品牌名称；
-- 运营组织、支持部门与审批部门；
-- 联系邮箱、页脚与展示文案；
-- 中英文界面的对应显示内容。
+Do not run `docker compose down --volumes` on a production project: it deletes
+PostgreSQL, Redis, backup, Grafana, Prometheus, and usage-failover volumes.
+Before every upgrade, export a verified backup and retain the matching
+`DATA_ENCRYPTION_KEY`:
 
-这些值保存在数据库中，不需要修改或重新构建前端代码。
+```bash
+bash scripts/export-backup.sh
+```
 
-## API 调用示例
+Container logs rotate at 10 MB × 5 files per service by default. Override
+`DOCKER_LOG_MAX_SIZE` and `DOCKER_LOG_MAX_FILES` in `.env` when the host has a
+different logging policy.
 
-OpenAI 兼容请求：
+To deploy prebuilt images instead of compiling source, set `BACKEND_IMAGE` and
+`NGINX_IMAGE` in `.env` to the exact release tags, then run:
+
+```bash
+docker compose --env-file .env -f docker-compose.app.yml pull
+docker compose --env-file .env -f docker-compose.app.yml up -d --wait
+```
+
+### 4. Claim the first administrator
+
+There is no built-in admin password. On the first visit to `/admin.html`, the
+administrator creates a strong password. The database stores only a versioned
+PBKDF2-SHA256 hash.
+
+Set a one-time `ADMIN_BOOTSTRAP_TOKEN` before startup. The first claim must
+provide this token; it is no longer involved after initialization. Database
+locking makes the first-claim operation concurrency-safe.
+
+> [!WARNING]
+> Complete the first-admin claim from localhost or a trusted network before
+> exposing the service. This distribution intentionally contains no external
+> SSO, OAuth, SAML, OIDC, or CAS login integration.
+
+### 5. Configure the platform
+
+After login, use **Admin → Branding** to configure platform and brand names,
+organization, support and approval teams, contact details, footer copy, and
+localized display text. These values are stored in PostgreSQL and do not
+require a frontend rebuild.
+
+### Essential configuration
+
+| Variable | Purpose | Production guidance |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | PostgreSQL credential | Required; unique random value |
+| `REDIS_PASSWORD` | Redis credential | Required; unique random value |
+| `JWT_SECRET` | Session and token signing | Required; do not reuse another secret |
+| `DATA_ENCRYPTION_KEY` | AES-256-GCM database field encryption | Required; independent 32-byte base64url value |
+| `ADMIN_BOOTSTRAP_TOKEN` | One-time first-admin claim | Strongly recommended |
+| `SESSION_COOKIE_SECURE` | Restrict cookies to HTTPS | Set to `true` behind TLS |
+| `HTTP_BIND_ADDRESS` | Public web bind address | Keep `127.0.0.1` during bootstrap |
+| `DEMO_DATA_ENABLED` | Load fictional data into a new empty database | Set to `false` for a blank instance |
+| `USAGE_CONTENT_LOGGING_ENABLED` | Persist request/response content | Keep `false` unless explicitly required |
+| `API_DOCS_ENABLED` | Serve dynamic Swagger, ReDoc, and the full runtime schema | Keep `false`; use the reviewed static gateway specification |
+
+Deployment-critical settings and safe defaults are documented in
+[.env.example](.env.example).
+
+## API examples
+
+### OpenAI-compatible request
 
 ```bash
 curl http://127.0.0.1/v1/chat/completions \
@@ -120,7 +308,7 @@ curl http://127.0.0.1/v1/chat/completions \
   }'
 ```
 
-Anthropic 兼容请求：
+### Anthropic-compatible request
 
 ```bash
 curl http://127.0.0.1/v1/messages \
@@ -134,44 +322,63 @@ curl http://127.0.0.1/v1/messages \
   }'
 ```
 
-模型标识与 Key 由管理员在后台创建和发放；演示 Key 不具备调用权限。
+Administrators register models and issue keys in the admin console. Demo keys
+cannot call upstream models.
 
-## 演示数据
+The reviewed, versioned public contract is available as
+[`docs/openapi-gateway.json`](docs/openapi-gateway.json). Production disables
+`/docs`, `/redoc`, and `/openapi.json` by default so internal management routes
+are not exposed accidentally. Set `API_DOCS_ENABLED=true` only on a trusted
+development or administration network.
 
-`DEMO_DATA_ENABLED=true` 时，后端只会在 `users` 与 `api_keys` 均为空的新数据库中写入虚构用户、已撤销 Key 和 30 天汇总趋势。它不会写入请求正文、响应预览、错误详情、真实组织名称或可用凭据，也不会混入已有实例。
+## Demo data
 
-需要完全空白的新库时，将其设置为：
+When `DEMO_DATA_ENABLED=true`, fictional users, revoked keys, and 30 days of
+aggregate trends are inserted only if both `users` and `api_keys` are empty.
+The seed never includes request or response bodies, detailed errors, real
+organization names, infrastructure addresses, or usable credentials.
+
+For a completely blank installation:
 
 ```dotenv
 DEMO_DATA_ENABLED=false
 ```
 
-## 安全边界
+## Security
 
-- 公开注册与基于 API Key 的密码找回默认关闭。
-- 用户密码和管理员密码统一执行 12–128 位强密码策略。
-- 浏览器登录使用 HttpOnly、SameSite Cookie；改密、重置或删除账户后，旧会话立即失效。
-- 上游密钥等敏感配置使用独立的 `DATA_ENCRYPTION_KEY` 加密保存。
-- 用量内容默认不落库，只记录状态、Token、延迟与不含正文的错误分类。
-- 原始数据库备份默认不能从管理后台下载，需要部署方显式开启。
-- Nginx 只信任明确配置的代理网段，并拒绝全网可信代理配置。
-- 生产数据库和 Redis 默认仅绑定回环地址。
-- 仓库不应包含数据库导出、运行日志、私有演示稿或历史产物。
+- API key plaintext is returned only when claimed or regenerated; the database
+  retains a SHA-256 hash for client authentication.
+- Recoverable upstream credentials are encrypted with AES-256-GCM using a
+  deployment-controlled key.
+- Public registration and API-key-based password recovery are disabled by
+  default.
+- Browser sessions use HttpOnly and SameSite cookies. Password changes,
+  account resets, and account deletion invalidate existing sessions.
+- Request and response content logging is disabled by default.
+- Raw database backup downloads from the admin console require an explicit
+  deployment opt-in.
+- PostgreSQL, Redis, Prometheus, Grafana, and the web entrypoint bind to
+  loopback by default.
+- Trusted proxy configuration rejects catch-all networks.
 
-安全问题请按 [安全政策](SECURITY.md) 私下报告，不要在公开 Issue 中披露漏洞细节。
+Please report vulnerabilities privately according to [SECURITY.md](SECURITY.md).
+Do not disclose credentials, database dumps, private logs, or working exploits
+in public issues.
 
-## 备份、恢复与离线部署
+## Backup, restore, and offline deployment
 
-Compose 中的备份边车默认每小时生成并校验一份 PostgreSQL custom-format 快照，保留最近 168 份。导出与恢复命令：
+The Compose backup sidecar creates and verifies a PostgreSQL custom-format
+snapshot every hour by default and retains the latest 168 snapshots.
 
 ```bash
 bash scripts/export-backup.sh
 bash scripts/restore-backup.sh /absolute/path/to/backup.dump
 ```
 
-恢复会改写数据库，请先阅读脚本提示并在隔离环境验证备份。
+Restore operations replace database state. Test every backup and encryption-key
+combination in an isolated environment before relying on it.
 
-构建全离线部署包：
+Build an air-gapped deployment bundle:
 
 ```bash
 TARGET_PLATFORM=linux/amd64 bash build-offline.sh
@@ -179,19 +386,22 @@ cd offline-images
 bash deploy-offline.sh
 ```
 
-离线包会独立生成部署凭据，并拒绝收录 `.dump` / `.sql` 数据库文件。详见 [离线部署说明](OFFLINE.md)。
+The offline builder generates independent deployment secrets and rejects
+`.dump` and `.sql` files. See [Offline deployment](OFFLINE.md).
 
-## 开发与验证
+## Development and verification
 
-后端：
+Backend:
 
 ```bash
-python -m pip install -r backend/requirements-dev.txt
-ruff check backend
-pytest -q backend/tests
+cd backend
+python -m pip install -r requirements-dev.txt
+python -m ruff check app tests ../scripts
+python -m pytest
+python -m alembic upgrade head
 ```
 
-前端：
+Frontend:
 
 ```bash
 cd frontend
@@ -202,30 +412,74 @@ npm test
 npm run build
 ```
 
-公开发布前：
+Release-critical browser flow (uses a disposable Compose project and isolated
+volumes on ports 18080/65432/6399):
 
 ```bash
+bash scripts/run-e2e.sh
+```
+
+Before publishing:
+
+```bash
+python scripts/check-version-sync.py
+python scripts/export-openapi.py --check
 bash scripts/check-public-release.sh
 ```
 
-该检查会扫描当前文件和 Git 历史中的凭据、数据库导出、旧品牌标识及内部资料路径。完整发布步骤见 [发布清单](docs/RELEASE_CHECKLIST.md)。
+The release check scans the current tree and Git history for credentials,
+database exports, former organization identifiers, internal artifacts, and
+generated local files. `VERSION` is the single release version source. A
+`v<version>` tag must point at a commit whose six release-critical CI jobs have
+already succeeded. `.github/workflows/release.yml` verifies those checks and
+version/changelog identity, scans images before publication, publishes versioned
+GHCR images, verifies that both packages are public and linked to this repository,
+keyless-signs their immutable digests, attaches SPDX SBOM attestations, and
+creates a GitHub Release containing the checksummed source bundle. A personal
+account's first GHCR publication pauses before release creation until the owner
+changes both new packages from their default private visibility to **Public**;
+rerunning that failed job then completes the release.
 
-## 项目结构
+## Documentation
+
+| Document | Description |
+| --- | --- |
+| [Technical architecture](docs/TECHNICAL.md) | Runtime design, data paths, and operational boundaries |
+| [Fallback behavior](docs/fallback.md) | Routing fallback and circuit-breaking semantics |
+| [Scheduling](docs/scheduling.md) | Scheduling, leader election, and Redis Sentinel notes |
+| [Offline deployment](OFFLINE.md) | Air-gapped build and deployment workflow |
+| [Release checklist](docs/RELEASE_CHECKLIST.md) | Public-release verification steps |
+| [Open-source audit](docs/OPEN_SOURCE_AUDIT.md) | Prioritized findings, evidence, and acceptance criteria |
+| [Edition boundaries](docs/EDITION_BOUNDARIES.md) | Public Community versus private Enterprise ownership and compatibility rules |
+| [Extension API](docs/EXTENSIONS.md) | Versioned loading contract, lifecycle, security dependencies, and provider registry |
+| [Static gateway OpenAPI](docs/openapi-gateway.json) | Reviewed public `/v1` and `/beta/v1` contract |
+| [Changelog](CHANGELOG.md) | Notable project changes |
+| [Security policy](SECURITY.md) | Supported versions and private disclosure process |
+| [Support](SUPPORT.md) | Public support boundaries and routing |
+| [Maintainers](MAINTAINERS.md) | Maintainer roles and responsibilities |
+
+## Repository layout
 
 ```text
-backend/    FastAPI 网关、管理 API、迁移与测试
-frontend/   React 控制台、后台、文档与样式
-nginx/      反向代理、静态站点与安全响应头
-postgres/   PostgreSQL 配置、备份与健康检查
-monitoring/ Prometheus 规则与 Grafana 看板
-scripts/    部署、迁移、备份和发布验证工具
-docs/       技术、调度、故障转移和发布文档
+backend/    FastAPI gateway, management APIs, migrations, and tests
+frontend/   React consoles, documentation UI, localization, and styles
+nginx/      Reverse proxy, static hosting, and security headers
+postgres/   PostgreSQL configuration, backups, and health checks
+monitoring/ Prometheus rules and Grafana dashboards
+scripts/    Deployment, migration, backup, and release tools
+docs/       Architecture and operations documentation
 ```
 
-## 参与贡献
+## Contributing
 
-请先阅读 [贡献指南](CONTRIBUTING.md) 与 [行为准则](CODE_OF_CONDUCT.md)。提交代码前应完成相关测试，并确保 `scripts/check-public-release.sh` 通过。
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md) before opening a pull request. Behavior
+changes should include tests and documentation; migrations and configuration
+changes should include upgrade and rollback notes.
 
-## 许可证
+## License
 
-本项目的开源许可见 [LICENSE](LICENSE)。
+Copyright 2026 徐鸿铎 and Open API Platform contributors.
+
+Licensed under the [Apache License 2.0](LICENSE). Attribution information is
+provided in [NOTICE](NOTICE).

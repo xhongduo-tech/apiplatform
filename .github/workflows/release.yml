@@ -1,0 +1,234 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verified-main-ci:
+    name: Require successful Community CI
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release identity and public tree
+        run: |
+          python scripts/check-version-sync.py
+          python scripts/check-release-tag.py "$GITHUB_REF_NAME"
+          bash scripts/check-public-release.sh
+          python scripts/export-openapi.py --check
+      - name: Require the tagged commit to be on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          git fetch --no-tags origin "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/${DEFAULT_BRANCH}"; then
+            echo "::error::release tag does not point to a commit on ${DEFAULT_BRANCH}"
+            exit 1
+          fi
+      - name: Require every release-critical CI check on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          checks="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100")"
+          required_checks=(
+            "Release hygiene"
+            "Dependency security"
+            "Backend"
+            "Frontend"
+            "Full-stack browser E2E"
+            "Container security"
+          )
+          for check_name in "${required_checks[@]}"; do
+            conclusion="$(jq -r --arg name "$check_name" '
+              [.check_runs[] | select(.name == $name)]
+              | sort_by(.started_at // "") | last | .conclusion // "missing"
+            ' <<<"$checks")"
+            if [[ "$conclusion" != "success" ]]; then
+              echo "::error::required CI check '$check_name' is '$conclusion' for ${GITHUB_SHA}"
+              exit 1
+            fi
+          done
+
+  signed-images:
+    name: Versioned images, SBOM and signatures
+    runs-on: ubuntu-latest
+    needs: verified-main-ci
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Define immutable release image names
+        id: metadata
+        run: |
+          mkdir -p release
+          version="$(cat VERSION)"
+          repository="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          repository_name="${repository#*/}"
+          backend_image="ghcr.io/${repository}-backend:$version"
+          web_image="ghcr.io/${repository}-web:$version"
+          {
+            echo "RELEASE_VERSION=$version"
+            echo "BACKEND_IMAGE=$backend_image"
+            echo "BACKEND_PACKAGE=${repository_name}-backend"
+            echo "WEB_IMAGE=$web_image"
+            echo "WEB_PACKAGE=${repository_name}-web"
+          } >> "$GITHUB_ENV"
+          {
+            echo "release_version=$version"
+            echo "backend_image=$backend_image"
+            echo "web_image=$web_image"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build versioned images locally
+        run: |
+          source_url="https://github.com/${GITHUB_REPOSITORY}"
+          docker build \
+            --label "org.opencontainers.image.source=${source_url}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${RELEASE_VERSION}" \
+            -t "$BACKEND_IMAGE" backend
+          docker build \
+            --label "org.opencontainers.image.source=${source_url}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${RELEASE_VERSION}" \
+            -t "$WEB_IMAGE" -f nginx/Dockerfile .
+      - name: Scan backend before publication
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: ${{ steps.metadata.outputs.backend_image }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Scan web image before publication
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: ${{ steps.metadata.outputs.web_image }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Sign in to GitHub Container Registry
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish immutable images
+        id: images
+        run: |
+          docker push "$BACKEND_IMAGE"
+          docker push "$WEB_IMAGE"
+          backend_ref="$(docker inspect --format='{{index .RepoDigests 0}}' "$BACKEND_IMAGE")"
+          web_ref="$(docker inspect --format='{{index .RepoDigests 0}}' "$WEB_IMAGE")"
+          printf 'backend_ref=%s\nweb_ref=%s\n' "$backend_ref" "$web_ref" >> "$GITHUB_OUTPUT"
+      - name: Require anonymous access to linked Community packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          owner_type="$(gh api "users/${GITHUB_REPOSITORY_OWNER}" --jq .type)"
+          case "$owner_type" in
+            User)
+              package_api="users/${GITHUB_REPOSITORY_OWNER}/packages/container"
+              ;;
+            Organization)
+              package_api="orgs/${GITHUB_REPOSITORY_OWNER}/packages/container"
+              ;;
+            *)
+              echo "::error::unsupported repository owner type: ${owner_type}"
+              exit 1
+              ;;
+          esac
+
+          for package_name in "$BACKEND_PACKAGE" "$WEB_PACKAGE"; do
+            package_json="$(gh api "${package_api}/${package_name}")"
+            if ! jq -e --arg repository "$GITHUB_REPOSITORY" '
+              .visibility == "public" and
+              .repository.full_name == $repository
+            ' <<<"$package_json" >/dev/null; then
+              echo "::error::GHCR package ${package_name} must be linked to ${GITHUB_REPOSITORY} and Public before the Community release can be created"
+              echo "::error::For a first release, change package visibility in GitHub Package settings, then rerun this failed job"
+              exit 1
+            fi
+          done
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+      - name: Keyless-sign immutable image digests
+        run: |
+          cosign sign --yes "$BACKEND_REF"
+          cosign sign --yes "$WEB_REF"
+        env:
+          BACKEND_REF: ${{ steps.images.outputs.backend_ref }}
+          WEB_REF: ${{ steps.images.outputs.web_ref }}
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.images.outputs.backend_ref }}
+          artifact-name: open-api-platform-backend-${{ steps.metadata.outputs.release_version }}.spdx.json
+          output-file: release/open-api-platform-backend-${{ steps.metadata.outputs.release_version }}.spdx.json
+          upload-release-assets: false
+      - name: Generate web SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.images.outputs.web_ref }}
+          artifact-name: open-api-platform-web-${{ steps.metadata.outputs.release_version }}.spdx.json
+          output-file: release/open-api-platform-web-${{ steps.metadata.outputs.release_version }}.spdx.json
+          upload-release-assets: false
+      - name: Attest image SBOMs
+        run: |
+          cosign attest --yes --type spdxjson \
+            --predicate "release/open-api-platform-backend-${RELEASE_VERSION}.spdx.json" "$BACKEND_REF"
+          cosign attest --yes --type spdxjson \
+            --predicate "release/open-api-platform-web-${RELEASE_VERSION}.spdx.json" "$WEB_REF"
+        env:
+          BACKEND_REF: ${{ steps.images.outputs.backend_ref }}
+          WEB_REF: ${{ steps.images.outputs.web_ref }}
+      - name: Package source and checksums
+        run: |
+          git archive --format=tar.gz \
+            --prefix="open-api-platform-${RELEASE_VERSION}/" \
+            --output="release/open-api-platform-${RELEASE_VERSION}.tar.gz" HEAD
+          printf '%s\n%s\n' "$BACKEND_REF" "$WEB_REF" > "release/image-digests-${RELEASE_VERSION}.txt"
+          cd release
+          sha256sum -- * > "SHA256SUMS-${RELEASE_VERSION}.txt"
+        env:
+          BACKEND_REF: ${{ steps.images.outputs.backend_ref }}
+          WEB_REF: ${{ steps.images.outputs.web_ref }}
+      - name: Upload verifiable release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: open-api-platform-${{ steps.metadata.outputs.release_version }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish GitHub Release and verified assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" release/*
+          --verify-tag
+          --title "Open API Platform ${RELEASE_VERSION}"
+          --generate-notes

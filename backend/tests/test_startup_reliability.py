@@ -159,6 +159,16 @@ async def test_lifespan_checks_dependencies_before_starting_tasks(monkeypatch):
     monkeypatch.setattr(main, "stop_circuit_listener", _named_async(calls, "stop-circuit"))
     monkeypatch.setattr(main, "start_log_listener", _named_async(calls, "start-log"))
     monkeypatch.setattr(main, "stop_log_listener", _named_async(calls, "stop-log"))
+    monkeypatch.setattr(
+        main.extension_manager,
+        "startup",
+        _named_async(calls, "start-extensions"),
+    )
+    monkeypatch.setattr(
+        main.extension_manager,
+        "shutdown",
+        _named_async(calls, "stop-extensions"),
+    )
     monkeypatch.setattr(main, "close_client", _named_async(calls, "close-http"))
     monkeypatch.setattr(main.engine, "dispose", lambda: calls.append("close-db"))
 
@@ -167,6 +177,8 @@ async def test_lifespan_checks_dependencies_before_starting_tasks(monkeypatch):
         calls.append("serving")
 
     assert calls.index("database") < calls.index("redis") < calls.index("start-writer")
+    assert calls.index("start-log") < calls.index("start-extensions") < calls.index("serving")
+    assert calls.index("stop-extensions") < calls.index("stop-writer")
     assert calls.index("stop-writer") < calls.index("close-db")
     assert main.app.state.ready is False
 

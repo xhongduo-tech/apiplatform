@@ -6,7 +6,7 @@ ARG VITE_PUBLIC_API_ORIGIN
 WORKDIR /app
 ENV VITE_PUBLIC_API_ORIGIN=${VITE_PUBLIC_API_ORIGIN}
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+RUN npm ci --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=60000
 COPY frontend/ ./
 RUN npm run build
 

@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 
 const entries = ["index.html", "admin.html"];
 const replacements = [
@@ -40,4 +41,39 @@ for (const file of entries) {
   writeFileSync(target, html);
 }
 
-console.log("✓ legacy bootstrap scripts externalized; strict CSP compatible");
+// @vitejs/plugin-legacy also injects a data: module import into each modern
+// entry and its polyfill chunk. A strict `script-src 'self'` correctly blocks
+// that import, which previously left the production page blank. Point the
+// feature guard at the same-origin external module used above instead.
+let guardImports = 0;
+for (const file of readdirSync(path.join("dist", "assets"))) {
+  if (!file.endsWith(".js")) continue;
+  const target = path.join("dist", "assets", file);
+  const source = readFileSync(target, "utf8");
+  const rewritten = source.replace(
+    /import'data:text\/javascript,[^']+import\.meta\.resolve not supported[^']*';/g,
+    () => {
+      guardImports += 1;
+      return 'import"/legacy-modern-check.js";';
+    },
+  );
+  if (rewritten !== source) {
+    writeFileSync(target, rewritten);
+    // nginx `gzip_static on` serves the sibling verbatim, so it must be
+    // regenerated after post-processing rather than retaining blocked code.
+    writeFileSync(`${target}.gz`, gzipSync(rewritten, { level: 9 }));
+  }
+}
+if (guardImports === 0) {
+  throw new Error("plugin-legacy guard template changed; refusing CSP-incompatible output");
+}
+
+for (const file of readdirSync(path.join("dist", "assets"))) {
+  if (!file.endsWith(".js")) continue;
+  const source = readFileSync(path.join("dist", "assets", file), "utf8");
+  if (source.includes("data:text/javascript")) {
+    throw new Error(`${file}: data: module import remains and violates the production CSP`);
+  }
+}
+
+console.log(`✓ legacy bootstrap externalized (${guardImports} guards); strict CSP compatible`);

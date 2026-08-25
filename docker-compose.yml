@@ -1,0 +1,64 @@
+# Open API Platform — source-build deployment
+#
+# Quick start:
+#   cp .env.example .env
+#   # Fill every required secret in .env, then:
+#   docker compose config
+#   docker compose up -d --build
+#
+# This standard entry point extends the production service definitions in
+# docker-compose.app.yml and adds local build contexts for the two project
+# images. Keep runtime policy in docker-compose.app.yml so source, prebuilt-image
+# and offline deployments share the same security and reliability settings.
+
+services:
+  postgres:
+    extends:
+      file: docker-compose.app.yml
+      service: postgres
+
+  pg-backup:
+    extends:
+      file: docker-compose.app.yml
+      service: pg-backup
+
+  redis:
+    extends:
+      file: docker-compose.app.yml
+      service: redis
+
+  backend:
+    extends:
+      file: docker-compose.app.yml
+      service: backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+  prometheus:
+    extends:
+      file: docker-compose.app.yml
+      service: prometheus
+
+  grafana:
+    extends:
+      file: docker-compose.app.yml
+      service: grafana
+
+  nginx:
+    extends:
+      file: docker-compose.app.yml
+      service: nginx
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+      args:
+        VITE_PUBLIC_API_ORIGIN: ${VITE_PUBLIC_API_ORIGIN:-}
+
+volumes:
+  redisdata:
+  promdata:
+  grafanadata:
+  pgdata:
+  pgbackups:
+  usagefailover:

@@ -13,11 +13,13 @@ from sqlalchemy import select, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.catalog_seed import seed_catalog_models, seed_scene_types
+from app._version import __version__
 from app.forum_seed import seed_forum_faq
 from app.config import settings
 from app.config_preflight import validate_runtime_config as _validate_runtime_config
 from app.database import SessionLocal, engine, init_db, validate_connection_budget
 from app.demo_seed import seed_demo_data
+from app.extensions import ExtensionManager
 from app.models import ModelRegistryORM
 from app.log_stream import start_log_listener, stop_log_listener
 from app.ops_scheduler import ops_scheduler
@@ -34,6 +36,8 @@ from app.platform_settings import get_branding_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("platform")
+
+extension_manager = ExtensionManager()
 
 # 多 worker 冷启动种子锁（"APISEED" 的稳定整数表示）。事务提交/回滚自动释放。
 _SEED_ADVISORY_LOCK_ID = 0x41504953454544
@@ -84,11 +88,19 @@ async def lifespan(app: FastAPI):
         await start_invalidate_listener()  # 跨 worker 缓存失效广播订阅
         await start_circuit_listener()     # 跨 worker 兜底熔断状态广播订阅
         await start_log_listener()         # 跨 worker 实时日志流广播订阅
+        # 扩展可依赖已经就绪的数据库/Redis/核心后台组件；任何启动失败都会在
+        # ready=True 前向上抛出，使生产探针保持 fail-closed。
+        await extension_manager.startup(app)
         app.state.ready = True
         log.info("%s 已启动", app.title)
         yield
     finally:
         app.state.ready = False
+        # 先关闭扩展，让其仍可使用数据库、Redis 和核心后台资源完成刷写/清理。
+        try:
+            await extension_manager.shutdown(app)
+        except Exception:
+            log.exception("关闭应用扩展失败")
         # 任一组件清理失败不能阻断其他组件释放连接/刷写用量。
         shutdown_steps = (
             ("log listener", stop_log_listener),
@@ -111,7 +123,14 @@ async def lifespan(app: FastAPI):
             log.exception("关闭数据库连接池失败")
 
 
-app = FastAPI(title="Open API Platform", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="Open API Platform",
+    version=__version__,
+    lifespan=lifespan,
+    docs_url="/docs" if settings.API_DOCS_ENABLED else None,
+    redoc_url="/redoc" if settings.API_DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if settings.API_DOCS_ENABLED else None,
+)
 app.include_router(proxy_router)
 app.include_router(beta_router)
 app.include_router(api_router)
@@ -236,3 +255,8 @@ async def ready():
 async def health():
     """兼容旧部署的综合健康探针；语义与 /ready 一致。"""
     return await _readiness_response()
+
+
+# 放在全部核心路由和异常处理器之后安装，确保扩展不能通过同路径抢占核心安全
+# 端点。配置项为空时不导入任何第三方模块，社区版行为保持不变。
+extension_manager.install_configured(app, settings.APPLICATION_EXTENSIONS)
