@@ -21,6 +21,54 @@ jobs:
       checks: read # Bind each CI job to its GitHub-authored check run.
       contents: read
     steps:
+      - name: Require a verified maintainer-signed annotated tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          expected_ref="refs/tags/${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF_TYPE" != "tag" || "$GITHUB_REF" != "$expected_ref" || "$GITHUB_REF_NAME" != v* ]]; then
+            echo "::error::release workflow requires a v* tag ref"
+            exit 1
+          fi
+
+          encoded_tag="$(jq -rn --arg tag "$GITHUB_REF_NAME" '$tag | @uri')"
+          ref_json="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${encoded_tag}")"
+          if ! tag_object_sha="$(jq -er --arg expected_ref "$expected_ref" '
+            select(.ref == $expected_ref and .object.type == "tag")
+            | .object.sha
+            | select(type == "string" and test("^[0-9a-f]{40}$"))
+          ' <<<"$ref_json")"; then
+            echo "::error::release ref must resolve exactly to an annotated tag object"
+            exit 1
+          fi
+
+          tag_json="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "/repos/${GITHUB_REPOSITORY}/git/tags/${tag_object_sha}")"
+          if ! jq -e \
+            --arg expected_tag "$GITHUB_REF_NAME" \
+            --arg expected_tag_sha "$tag_object_sha" \
+            --arg expected_commit "$GITHUB_SHA" '
+              .sha == $expected_tag_sha and
+              .tag == $expected_tag and
+              .object.type == "commit" and
+              .object.sha == $expected_commit and
+              .verification.verified == true and
+              .verification.reason == "valid" and
+              .tagger.name == "徐鸿铎" and
+              .tagger.email == "x.hongduo@hotmail.com"
+            ' <<<"$tag_json" >/dev/null; then
+            echo "::error::release tag must point directly to ${GITHUB_SHA} and have a valid GitHub-verified signature from 徐鸿铎 <x.hongduo@hotmail.com>"
+            jq -c '{sha, tag, object, tagger: {name: .tagger.name, email: .tagger.email}, verification: {verified: .verification.verified, reason: .verification.reason}}' <<<"$tag_json"
+            exit 1
+          fi
+          echo "Authenticated signed annotated tag ${GITHUB_REF_NAME} at ${GITHUB_SHA}."
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
