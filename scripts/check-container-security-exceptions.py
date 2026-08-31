@@ -8,6 +8,7 @@ import datetime as dt
 import hashlib
 import json
 import re
+import stat
 from pathlib import Path
 
 
@@ -103,6 +104,8 @@ UPLOAD_ARTIFACT_ACTION = (
     "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
 )
 TRIVY_VERSION = "0.70.0"
+TRIVY_ACTION_VERSION = "v0.70.0"
+TRIVY_CACHE_DIR = "${{runner.temp}}/trivy-cache"
 MAX_TRIVY_DB_AGE = dt.timedelta(days=3)
 FORBIDDEN_IMPLICIT_TRIVY_PATHS = (
     ROOT / ".trivyignore",
@@ -112,7 +115,7 @@ FORBIDDEN_IMPLICIT_TRIVY_PATHS = (
     ROOT / "trivy.yml",
 )
 CONTAINER_SECURITY_JOB_SHA256 = (
-    "3ab7157e6bb5fb5c385e30ed4a528732468992ccd2c0c99415b8a1177a429d2a"
+    "e3e542bfec66c1d357989655fef7f4c4f441a9ab99dd21583970e35a7cb39b44"
 )
 EXPECTED_CONTAINER_SECURITY_STEPS = (
     "uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
@@ -241,6 +244,23 @@ def validate_container_security_job(workflow: str) -> str:
             "evidence capture, metadata, upload, and validation steps must be strictly adjacent"
         )
 
+    trivy_step_names = tuple(
+        descriptor.removeprefix("name: ")
+        for descriptor in step_headers
+        if descriptor.startswith("name: Capture unfiltered ")
+        or descriptor.startswith("name: Scan ")
+    )
+    if len(trivy_step_names) != 14:
+        fail("container-security must contain exactly 14 reviewed Trivy scans")
+    for name in trivy_step_names:
+        block = workflow_step(job, name)
+        if field_values(block, "uses") != [TRIVY_ACTION]:
+            fail(f"{name} must use the pinned Trivy action")
+        if field_values(block, "cache-dir") != [TRIVY_CACHE_DIR]:
+            fail(f"{name} must use the isolated runner Trivy cache")
+        if field_values(block, "version") != [TRIVY_ACTION_VERSION]:
+            fail(f"{name} must pin Trivy {TRIVY_ACTION_VERSION}")
+
     # This reviewed digest deliberately covers every action input and every run
     # command in the job. Besides rejecting unknown steps, it prevents an
     # existing build/verification step from being repurposed after validation
@@ -316,6 +336,8 @@ def require_trivy_scan(
     expected = {
         "uses": TRIVY_ACTION,
         "image-ref": image_ref,
+        "cache-dir": TRIVY_CACHE_DIR,
+        "version": TRIVY_ACTION_VERSION,
         "format": output_format,
         "exit-code": f'"{exit_code}"',
         "ignore-unfixed": ignore_unfixed,
@@ -412,8 +434,30 @@ def load_entries(severity: str, path: Path) -> list[dict[str, object]]:
 
 def load_json_object(path: Path, label: str) -> dict[str, object]:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        fail(f"cannot inspect {label} at {path}: {exc}")
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        fail(f"{label} must be a regular, non-symlink file")
+
+    def strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        document: dict[str, object] = {}
+        for key, value in pairs:
+            if key in document:
+                raise ValueError(f"duplicate JSON key: {key}")
+            document[key] = value
+        return document
+
+    def reject_nonfinite(value: str) -> object:
+        raise ValueError(f"non-finite JSON number: {value}")
+
+    try:
+        document = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=strict_object,
+            parse_constant=reject_nonfinite,
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         fail(f"cannot parse {label} at {path}: {exc}")
     if not isinstance(document, dict):
         fail(f"{label} must be a JSON object")
@@ -480,8 +524,14 @@ def report_scopes(
             fail(f"{image_ref} evidence contains a malformed result")
         target = result.get("Target")
         result_class = result.get("Class")
-        vulnerabilities = result.get("Vulnerabilities") or []
-        if not isinstance(target, str) or not isinstance(vulnerabilities, list):
+        raw_vulnerabilities = result.get("Vulnerabilities")
+        if raw_vulnerabilities is None:
+            vulnerabilities: list[object] = []
+        elif isinstance(raw_vulnerabilities, list):
+            vulnerabilities = raw_vulnerabilities
+        else:
+            fail(f"{image_ref} evidence contains a malformed vulnerability list")
+        if not isinstance(target, str):
             fail(f"{image_ref} evidence contains a malformed target")
         for vulnerability in vulnerabilities:
             if not isinstance(vulnerability, dict):
@@ -524,6 +574,32 @@ def compare_scopes(
     fail(f"{label} evidence drifted; missing={missing[:5]}, extra={extra[:5]}")
 
 
+def parse_trivy_timestamp(value: object, label: str) -> dt.datetime:
+    if not isinstance(value, str):
+        fail(f"Trivy vulnerability database {label} timestamp is missing")
+    if not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z",
+        value,
+    ):
+        fail(
+            f"Trivy vulnerability database {label} timestamp must be RFC3339 UTC"
+        )
+    try:
+        # Trivy emits RFC3339Nano while datetime.fromisoformat on older
+        # supported Python runtimes accepts at most microseconds.
+        normalized_timestamp = re.sub(
+            r"(\.[0-9]{6})[0-9]+(?=Z$)", r"\1", value
+        )
+        timestamp = dt.datetime.fromisoformat(
+            normalized_timestamp.replace("Z", "+00:00")
+        )
+    except ValueError:
+        fail(f"Trivy vulnerability database {label} timestamp is invalid")
+    if timestamp.tzinfo is None:
+        fail(f"Trivy vulnerability database {label} timestamp has no timezone")
+    return timestamp
+
+
 def validate_trivy_evidence(evidence_dir: Path, now: dt.datetime) -> str:
     postgres_report = load_json_object(
         evidence_dir / "postgres-unfiltered-high-critical.json",
@@ -536,32 +612,42 @@ def validate_trivy_evidence(evidence_dir: Path, now: dt.datetime) -> str:
     version = load_json_object(
         evidence_dir / "trivy-version.json", "Trivy version evidence"
     )
+    if set(version) != {"Version", "VulnerabilityDB"}:
+        fail("Trivy version evidence fields drifted")
     if version.get("Version") != TRIVY_VERSION:
         fail(f"Trivy evidence must use scanner {TRIVY_VERSION}")
     vulnerability_db = version.get("VulnerabilityDB")
-    updated_text = (
-        vulnerability_db.get("UpdatedAt")
-        if isinstance(vulnerability_db, dict)
-        else None
+    if not isinstance(vulnerability_db, dict):
+        fail("Trivy evidence has no vulnerability database metadata")
+    if set(vulnerability_db) != {
+        "Version",
+        "NextUpdate",
+        "UpdatedAt",
+        "DownloadedAt",
+    }:
+        fail("Trivy vulnerability database metadata fields drifted")
+    if vulnerability_db.get("Version") != 2:
+        fail("Trivy vulnerability database must use schema version 2")
+
+    updated_at = parse_trivy_timestamp(
+        vulnerability_db.get("UpdatedAt"), "UpdatedAt"
     )
-    if not isinstance(updated_text, str):
-        fail("Trivy evidence has no vulnerability database timestamp")
-    try:
-        # Trivy emits RFC3339Nano while datetime.fromisoformat on older
-        # supported Python runtimes accepts at most microseconds.
-        normalized_timestamp = re.sub(
-            r"(\.[0-9]{6})[0-9]+(?=Z$)", r"\1", updated_text
-        )
-        updated_at = dt.datetime.fromisoformat(
-            normalized_timestamp.replace("Z", "+00:00")
-        )
-    except ValueError:
-        fail("Trivy vulnerability database timestamp is invalid")
-    if updated_at.tzinfo is None:
-        fail("Trivy vulnerability database timestamp must include a timezone")
+    next_update = parse_trivy_timestamp(
+        vulnerability_db.get("NextUpdate"), "NextUpdate"
+    )
+    downloaded_at = parse_trivy_timestamp(
+        vulnerability_db.get("DownloadedAt"), "DownloadedAt"
+    )
+    if next_update <= updated_at:
+        fail("Trivy vulnerability database update window is invalid")
+    if downloaded_at < updated_at - dt.timedelta(minutes=5):
+        fail("Trivy vulnerability database was downloaded before it was built")
     age = now - updated_at
     if age < -dt.timedelta(minutes=5) or age > MAX_TRIVY_DB_AGE:
         fail("Trivy vulnerability database is future-dated or more than 72 hours old")
+    download_age = now - downloaded_at
+    if download_age < -dt.timedelta(minutes=5) or download_age > MAX_TRIVY_DB_AGE:
+        fail("Trivy vulnerability database download is future-dated or over 72 hours old")
 
     postgres_ref = f"postgres:16-alpine@{POSTGRES_DIGEST}"
     postgres_arch, postgres_findings = report_scopes(
@@ -945,7 +1031,7 @@ def main() -> None:
     )
     if metadata_step.splitlines() != [
         "      - name: Capture Trivy scanner and database metadata",
-        "        run: trivy version --format json > trivy-version.json",
+        '        run: trivy version --cache-dir "${{runner.temp}}/trivy-cache" --format json > trivy-version.json',
     ]:
         fail("Trivy evidence must record scanner and vulnerability DB metadata")
     evidence_steps = (

@@ -61,6 +61,10 @@ Critical or fixable-High finding, stale exception, architecture mismatch,
 malformed report, scanner-version drift, or vulnerability database older than
 72 hours fails closed. Unfixable High findings remain in the unfiltered evidence
 for release risk assessment; this gate does not represent them as remediated.
+Every Trivy invocation pins the reviewed scanner version and uses one
+runner-temporary cache outside the checked-out repository. The metadata step
+reads that exact cache and validates the database schema, build time, download
+time and update window, so repository files cannot substitute scanner state.
 The checker also locks the complete `container-security` job body. Treat a job
 digest change as a security review event: review every step, command, action
 input and ordering change before updating the lock. The protected workflow,
