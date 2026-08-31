@@ -82,7 +82,7 @@ windows, but they cannot weaken these technical release gates. Proprietary
 licensing controls entitlement authenticity; they do not replace application,
 supply-chain, operational, or incident-response security.
 
-## Backend container boundary
+## Project container boundaries
 
 The backend uses a digest-pinned, multi-stage Alpine image. The runtime keeps
 only the application dependencies and the PostgreSQL 16 client required by the
@@ -93,3 +93,8 @@ The CI gate scans every Critical finding, including findings without an
 upstream fix, and separately blocks fixable High findings. Changing the base
 distribution, package set, runtime user, or backup client therefore requires a
 container smoke test, both vulnerability gates, and an updated SBOM.
+
+The web image uses a digest-pinned unprivileged Nginx runtime and runs as UID
+`101`; the Node build stage is not copied into the runtime. Base-image digest
+updates remain release-gated by both web-image vulnerability scans and a new
+SPDX SBOM.

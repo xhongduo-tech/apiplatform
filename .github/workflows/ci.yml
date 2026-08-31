@@ -295,6 +295,15 @@ jobs:
           '
       - name: Build web image
         run: docker build -t apiplatform-nginx:ci -f nginx/Dockerfile .
+      - name: Verify web runtime boundary
+        run: |
+          docker run --rm --entrypoint /bin/sh apiplatform-nginx:ci -c '
+            test "$(id -u)" = 101
+            test "$(id -g)" = 101
+            ! command -v node
+            ! command -v npm
+          '
+          docker run --rm apiplatform-nginx:ci nginx -t
       - name: Scan backend image for all CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

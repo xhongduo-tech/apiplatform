@@ -28,6 +28,8 @@ All notable changes are recorded here. The project follows Semantic Versioning.
   the backup client to the PostgreSQL 16 server major, and removed the Perl
   packages responsible for unresolved Critical findings in the former Debian
   image.
+- Refreshed the digest-pinned unprivileged Nginx runtime to include the Alpine
+  OpenSSL 3.5.8 fix for CVE-2026-14456.
 
 ### Operations
 
