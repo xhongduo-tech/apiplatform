@@ -282,6 +282,17 @@ jobs:
           persist-credentials: false
       - name: Build backend image
         run: docker build -t apiplatform-backend:ci backend
+      - name: Verify backend runtime boundary
+        run: |
+          docker run --rm --entrypoint /bin/sh apiplatform-backend:ci -c '
+            test "$(id -u)" = 10001
+            test "$(id -g)" = 10001
+            pg_dump --version | grep -Eq "^pg_dump \(PostgreSQL\) 16\."
+            pg_restore --version | grep -Eq "^pg_restore \(PostgreSQL\) 16\."
+            python -c "import app.main, cryptography, psycopg, uvloop"
+            ! command -v pip
+            ! command -v perl
+          '
       - name: Build web image
         run: docker build -t apiplatform-nginx:ci -f nginx/Dockerfile .
       - name: Scan backend image for all CRITICAL vulnerabilities

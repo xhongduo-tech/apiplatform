@@ -440,6 +440,10 @@ cd offline-images
 bash deploy-offline.sh
 ```
 
+Signed GitHub/GHCR release artifacts currently target `linux/amd64`.
+`TARGET_PLATFORM=linux/arm64` is a locally tested source/offline build path,
+not an official signed arm64 release.
+
 The offline builder generates independent deployment secrets and rejects
 `.dump` and `.sql` files. See [Offline deployment](OFFLINE.md).
 

@@ -24,6 +24,10 @@ All notable changes are recorded here. The project follows Semantic Versioning.
 - Hardened release provenance checks and offline packages with immutable image
   identities, exact source commits, checksums, and an explicit unsigned-source
   bundle boundary.
+- Moved the backend build and runtime to a digest-pinned Alpine base, pinned
+  the backup client to the PostgreSQL 16 server major, and removed the Perl
+  packages responsible for unresolved Critical findings in the former Debian
+  image.
 
 ### Operations
 

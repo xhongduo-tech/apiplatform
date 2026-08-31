@@ -614,6 +614,7 @@ SKIP_IMAGE_LOAD=1 bash deploy-offline.sh
 ```
 
 镜像 tar 带 gzip 与 `image-manifest.txt` 架构校验；PostgreSQL 使用 Compose 项目隔离的数据卷（同机多套部署须使用不同 `COMPOSE_PROJECT_NAME`）。
+当前签名 GitHub/GHCR 正式发行物以 `linux/amd64` 为目标；`TARGET_PLATFORM=linux/arm64` 是已验证的本地源码/离线构建路径，不表示已发布签名 arm64 正式发行物。
 运行期备份为经 `pg_restore --list` 校验的 PostgreSQL custom-format `.dump` 快照；格式压缩不等于加密，部署方仍须使用加密存储、访问控制与离机副本保护。开源发行包不含数据库 seed/dump；可选演示汇总数据由 `demo_seed.py` 在全新空库中生成。
 离线包含 `package-info.txt`（构建版本）与 `.env`（禁止 pull）。
 
