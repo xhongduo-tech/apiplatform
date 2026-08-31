@@ -7,10 +7,13 @@ condition = "AND"
 targetRules = ["generic-api-key"]
 paths = [
   '''^\.github/workflows/ci\.yml$''',
+  '''^backend/tests/test_compose_runtime_config\.py$''',
   '''^scripts/run-e2e\.sh$''',
+  '''^scripts/test-sentinel-failover\.sh$''',
 ]
 regexes = [
   '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
+  '''^compose-test-jwt-secret-at-least-32-characters$''',
   '''^compose-validation-jwt-secret-at-least-32-characters$''',
   '''^e2e-jwt-secret-release-check-at-least-32-characters$''',
 ]
@@ -25,6 +28,7 @@ paths = [
 ]
 regexes = [
   '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
+  '''^7ef83612a4c90bd5e2810f47a693bc58d1046efa92b7c503bd816e02d579ac43$''',
   '''^sk-plain-1234567890$''',
 ]
 
