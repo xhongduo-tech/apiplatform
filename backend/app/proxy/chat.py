@@ -33,8 +33,9 @@ from app.proxy.common import (
 from app.session_stats import resolve_tool_calls_count
 from app.proxy.db_bridge import prepare_proxy_request
 from app.proxy import policy
+from app.proxy.request_body import read_json_object
 from app.proxy.routing import adapt_request, build_endpoint, select_endpoint
-from app.proxy.token_estimate import estimate_prompt_tokens_async
+from app.proxy.token_estimate import estimate_reservation_tokens_async
 from app.proxy.usage import estimate_cost, extract_response_text_any, extract_usage, finalize_stream_usage
 from app.usage_writer import usage_writer
 
@@ -197,10 +198,12 @@ async def chat_completions(
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None),
 ):
-    body = await request.json()
+    body = await read_json_object(request)
     prep = await prepare_proxy_request(authorization, body.get("model"))
-    # TPM 预扣：按 prompt 估算预记账，完成后由 record_tokens 校正差额
-    reserved = await policy.enforce_pre(prep.key, request, db, await estimate_prompt_tokens_async(body), model=prep.model)
+    # TPM 预扣：覆盖 prompt + 最大输出预算，完成后由 record_tokens 校正差额。
+    reserved = await policy.enforce_pre(
+        prep.key, request, db, await estimate_reservation_tokens_async(body), model=prep.model,
+    )
     return await relay_chat_like(
         body, prep.key, prep.model, prep.resolved_id, bool(body.get("stream")),
         upstream_suffix="/chat/completions",

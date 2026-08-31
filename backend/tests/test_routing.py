@@ -1,4 +1,7 @@
 """上游路径解析单测。"""
+import pytest
+from fastapi import HTTPException
+
 from app.models import ModelRegistryORM
 from app.proxy.routing import (
     _ep_counters,
@@ -12,6 +15,19 @@ from app.proxy.routing import (
 def test_resolve_upstream_path_default():
     m = ModelRegistryORM(id="x", name="x", provider="")
     assert resolve_upstream_path(m, "/embeddings") == "/embeddings"
+
+
+def test_legacy_unsafe_custom_header_fails_closed_before_outbound_request():
+    model = ModelRegistryORM(
+        id="legacy-unsafe-header",
+        name="legacy",
+        provider="",
+        base_url="https://inference.example.test/v1",
+        custom_headers={"Content-Length": "1"},
+    )
+    with pytest.raises(HTTPException) as exc:
+        select_endpoint(model)
+    assert exc.value.status_code == 503
 
 
 def test_resolve_upstream_path_from_extra():

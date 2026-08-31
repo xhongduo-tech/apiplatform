@@ -55,6 +55,37 @@ def _request(ip: str = "127.0.0.1") -> Request:
     return Request({"type": "http", "method": "GET", "path": "/", "headers": [], "client": (ip, 1234)})
 
 
+def test_spoofed_forwarded_ip_is_ignored_without_trusted_proxy(monkeypatch):
+    monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", False)
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [(b"x-real-ip", b"198.51.100.8")],
+        "client": ("192.0.2.7", 1234),
+    })
+    assert public._client_ip(request) == "192.0.2.7"
+
+
+def test_every_expensive_public_status_route_has_rate_dependency():
+    guarded_paths = {
+        "/public/platform-status/breakdown",
+        "/public/platform-status/tool-calls",
+        "/public/platform-status/context-length",
+        "/public/platform-status/heatmap",
+    }
+    guarded = {
+        route.path
+        for route in public.router.routes
+        if route.path in guarded_paths
+        and any(
+            dependency.call is public._public_status_rate_dependency
+            for dependency in route.dependant.dependencies
+        )
+    }
+    assert guarded == guarded_paths
+
+
 @pytest.mark.asyncio
 async def test_platform_status_reuses_process_cache(monkeypatch):
     calls = {"count": 0}

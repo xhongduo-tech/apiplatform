@@ -4,6 +4,7 @@
 
 offline-images/
 offline-wheels/
+/release/
 
 # Secrets and runtime data must never be sent to BuildKit (including remote
 # builders), even when no Dockerfile currently COPYs them.
@@ -13,15 +14,22 @@ offline-wheels/
 **/.env
 **/.env.*
 !**/.env.example
+**/.dev-jwt-secret
+**/*.local
 **/*.dump
 **/*.backup
 **/*.sql
+**/*.db
+**/*.sqlite
+**/*.sqlite3
 **/*.pem
 **/*.key
 **/*.p12
 **/*.pfx
 **/*.log
 /logs/
+/backend/data/usage_failover.jsonl
+/seed/
 
 .git/
 .github/
@@ -35,8 +43,14 @@ offline-wheels/
 **/.pytest_cache/
 **/.ruff_cache/
 **/*.tsbuildinfo
+**/.coverage
+**/coverage.xml
+**/htmlcov/
+**/test-results/
+**/playwright-report/
 
 # 本地产物：镜像里由 npm run build 重新生成，带进去只会造成"改了没生效"的错觉
 frontend/dist/
 
 .DS_Store
+Thumbs.db

@@ -25,16 +25,48 @@ offline_random_base64url_32() {
   fi
 }
 
+offline_template_image() {
+  local template=$1 key=$2 value
+  value="$(awk -F= -v key="${key}" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "${template}")"
+  if [[ -z "${value}" || ! "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ || \
+        "${value}" == *:latest ]]; then
+    echo "✗ .env.template 中 ${key} 不是固定的离线镜像引用：${value:-<empty>}" >&2
+    return 1
+  fi
+  printf '%s\n' "${value}"
+}
+
 offline_ensure_runtime_env() {
   local env_root="${1:?missing deployment root}"
   local target="${env_root}/.env"
-  [[ -f "${target}" ]] && return 0
   [[ -f "${env_root}/.env.template" ]] || {
     echo "✗ 缺少 .env.template，拒绝生成部署秘密" >&2
     return 1
   }
 
-  local old_umask tmp
+  if [[ -f "${target}" ]]; then
+    local image_key expected_image runtime_image
+    for image_key in BACKEND_IMAGE NGINX_IMAGE POSTGRES_IMAGE REDIS_IMAGE \
+      PROMETHEUS_IMAGE GRAFANA_IMAGE; do
+      expected_image="$(offline_template_image "${env_root}/.env.template" "${image_key}")"
+      runtime_image="$(offline_template_image "${target}" "${image_key}")"
+      if [[ "${runtime_image}" != "${expected_image}" ]]; then
+        echo "✗ .env 中 ${image_key} 偏离离线 manifest：${runtime_image}" >&2
+        return 1
+      fi
+    done
+    return 0
+  fi
+
+  local old_umask tmp template
+  local backend_image nginx_image postgres_image redis_image prometheus_image grafana_image
+  template="${env_root}/.env.template"
+  backend_image="$(offline_template_image "${template}" BACKEND_IMAGE)"
+  nginx_image="$(offline_template_image "${template}" NGINX_IMAGE)"
+  postgres_image="$(offline_template_image "${template}" POSTGRES_IMAGE)"
+  redis_image="$(offline_template_image "${template}" REDIS_IMAGE)"
+  prometheus_image="$(offline_template_image "${template}" PROMETHEUS_IMAGE)"
+  grafana_image="$(offline_template_image "${template}" GRAFANA_IMAGE)"
   old_umask="$(umask)"
   umask 077
   tmp="$(mktemp "${env_root}/.env.tmp.XXXXXX")"
@@ -42,12 +74,12 @@ offline_ensure_runtime_env() {
   cat > "${tmp}" <<EOF
 # 目标机首次部署时生成；每套部署独有。不得复制到其它实例或提交源码。
 COMPOSE_PULL_POLICY=never
-BACKEND_IMAGE=apiplatform-backend:latest
-NGINX_IMAGE=apiplatform-nginx:latest
-POSTGRES_IMAGE=apiplatform-postgres:16-alpine
-REDIS_IMAGE=apiplatform-redis:7-alpine
-PROMETHEUS_IMAGE=apiplatform-prometheus:v3.13.2
-GRAFANA_IMAGE=apiplatform-grafana:13.2.0
+BACKEND_IMAGE=${backend_image}
+NGINX_IMAGE=${nginx_image}
+POSTGRES_IMAGE=${postgres_image}
+REDIS_IMAGE=${redis_image}
+PROMETHEUS_IMAGE=${prometheus_image}
+GRAFANA_IMAGE=${grafana_image}
 POSTGRES_PASSWORD=$(offline_random_hex 24)
 REDIS_PASSWORD=$(offline_random_hex 24)
 JWT_SECRET=$(offline_random_hex 48)
@@ -161,15 +193,16 @@ offline_postgres_failure_help() {
   echo ""
   echo "── postgres 诊断 ──"
   ${DOCKER_COMPOSE} ps postgres 2>/dev/null || true
-  local postgres_id
+  local postgres_id postgres_image
+  postgres_image="$(offline_template_image "${ROOT}/.env" POSTGRES_IMAGE 2>/dev/null || true)"
   postgres_id="$(${DOCKER_COMPOSE} ps -q postgres 2>/dev/null || true)"
   if [[ -n "${postgres_id}" ]] && docker inspect "${postgres_id}" >/dev/null 2>&1; then
     echo "  容器状态: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} err={{.State.Error}}' "${postgres_id}" 2>/dev/null)"
   else
     echo "  当前 Compose 项目的 postgres 容器不存在（compose up 可能未成功创建）"
   fi
-  if ! docker image inspect apiplatform-postgres:16-alpine >/dev/null 2>&1; then
-    echo "  ✗ 镜像 apiplatform-postgres:16-alpine 不存在 → 请先 docker load apiplatform-postgres.tar.gz"
+  if [[ -n "${postgres_image}" ]] && ! docker image inspect "${postgres_image}" >/dev/null 2>&1; then
+    echo "  ✗ manifest 镜像 ${postgres_image} 不存在 → 请先 docker load apiplatform-postgres.tar.gz"
   fi
   echo "  最近日志:"
   ${DOCKER_COMPOSE} logs postgres --tail 40 2>/dev/null | sed 's/^/    /' || true
@@ -208,7 +241,8 @@ offline_wait_postgres() {
   [[ "${max_attempts}" -lt 1 ]] && max_attempts=1
 
   echo "▶ 等待 postgres 就绪（最多 ${wait_sec}s）"
-  local attempt=0
+  local attempt=0 postgres_image
+  postgres_image="$(offline_template_image "${ROOT}/.env" POSTGRES_IMAGE 2>/dev/null || true)"
   while [[ "${attempt}" -lt "${max_attempts}" ]]; do
     attempt=$((attempt + 1))
     local postgres_id=""
@@ -229,8 +263,8 @@ offline_wait_postgres() {
         ${DOCKER_COMPOSE} logs postgres --tail 6 2>/dev/null | sed 's/^/    /'
       fi
     elif [[ "${state}" == "missing" && "${attempt}" -eq 3 ]]; then
-      if ! docker image inspect apiplatform-postgres:16-alpine >/dev/null 2>&1; then
-        echo "✗ 镜像 apiplatform-postgres:16-alpine 不存在，无法启动数据库"
+      if [[ -n "${postgres_image}" ]] && ! docker image inspect "${postgres_image}" >/dev/null 2>&1; then
+        echo "✗ manifest 镜像 ${postgres_image} 不存在，无法启动数据库"
         offline_postgres_failure_help
         return 1
       fi

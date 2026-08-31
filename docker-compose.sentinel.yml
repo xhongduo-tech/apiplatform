@@ -3,74 +3,341 @@
 #
 # 用法：
 #   docker compose -f docker-compose.app.yml -f docker-compose.sentinel.yml up -d
-# 并以环境变量启用后端的 Sentinel 发现（覆盖内置默认）：
-#   REDIS_SENTINEL_NODES=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-#   REDIS_SENTINEL_MASTER=apiplatform-master
+# overlay 会自动把三个 Sentinel 地址注入 backend，并在同一隔离网络中使用
+# 稳定 link-local 地址，避免容器停止后的 DNS 消失与普通 bridge IP 重分配。
 #
-# 口令必须与主 compose 的 REDIS_PASSWORD 一致，不在源码中预置。
+# master 复制/连接口令使用主 compose 的 REDIS_PASSWORD；Sentinel API 必须
+# 使用独立的 REDIS_SENTINEL_PASSWORD 保护。两者均不在源码中预置。
 #
-# 拓扑：redis(master) + redis-replica + sentinel×3（quorum=2）。
+# 拓扑：两个 Redis 数据节点 + sentinel×3（quorum=2）。首次空卷启动时 redis
+# 是 master；故障转移后两个节点在重启时依据持久 Sentinel 的 2/3 多数恢复角色，
+# 不会无条件把 redis-replica 指回最初 master。
 # master 进程/容器故障后 sentinel 提升 replica，backend 经 master_for 自动
-# 跟随新 master；切换窗口内的限流命令按 fail-open 放行，不产生业务错误。
-# 实测（down-after 5000 / failover-timeout 15000）：从杀 master 到客户端在新
-# master 恢复时间取决于部署方的 Sentinel 参数；切换窗口内请求不报错（fail-open），只是 RPM/TPM
-# 限流计数暂时失效（放开不计），切换完成即恢复。若需更短切换，可调低
+# 跟随新 master；切换窗口内无法安全判定 RPM/TPM 时，中继关闭式返回 503
+# 与 `Retry-After: 5`，避免协调层故障变成无限流量。
+# master 恢复时间取决于部署方的 Sentinel 参数；切换完成后请求自动恢复。
+# 若需更短切换，可调低
 # down-after-milliseconds（代价是更易因瞬时抖动误判）。原 master 恢复后被
 # sentinel 收编为 replica，不抢回主位。
 #
-# 边界（单机诚实说明）：本 overlay 防的是 Redis 进程/容器级故障；整机宕机
-# 需把 replica 与至少一个 sentinel 部署到第二台主机（本文件的服务定义可
-# 原样搬过去，改 REDIS_SENTINEL_NODES 即可）。
+# 边界（单机诚实说明）：本 overlay 防的是 Redis 进程/容器级故障，不覆盖整机
+# 宕机。跨主机/机架/可用区部署需要由外部编排和网络层提供稳定、可路由地址及
+# 独立故障域，不能原样搬用这份 link-local Compose overlay。
 # ============================================================================
 
 x-sentinel-common: &sentinel-common
   image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
   restart: unless-stopped
+  user: "999:1000"
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  environment:
+    REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+    REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+    REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+    REDIS_SENTINEL_PRIMARY_ADDRESS: ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+    REDIS_SENTINEL_REPLICA_ADDRESS: ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
+    # Concrete services override this placeholder with their link-local IP.
+    SENTINEL_ANNOUNCE_ADDRESS: 169.254.255.255
   depends_on:
     redis:
-      condition: service_healthy
+      condition: service_started
     redis-replica:
       condition: service_started
   entrypoint: ["/bin/sh", "-c"]
   command:
     - |
-      cat >/tmp/sentinel.conf <<'EOF'
-      port 26379
-      sentinel monitor apiplatform-master redis 6379 2
-      sentinel down-after-milliseconds apiplatform-master 5000
-      sentinel failover-timeout apiplatform-master 15000
-      sentinel parallel-syncs apiplatform-master 1
-      sentinel resolve-hostnames yes
-      sentinel announce-hostnames yes
-      sentinel auth-pass apiplatform-master ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      case "$${REDIS_PASSWORD}" in
+        ''|*[!A-Za-z0-9_-]*) echo 'Sentinel requires an alphanumeric, underscore, or hyphen Redis password' >&2; exit 2 ;;
+      esac
+      case "$${REDIS_SENTINEL_PASSWORD}" in
+        ''|*[!A-Za-z0-9_-]*) echo 'Sentinel API password must be non-empty and contain only letters, digits, underscore, or hyphen' >&2; exit 2 ;;
+      esac
+      if [ "$${REDIS_PASSWORD}" = "$${REDIS_SENTINEL_PASSWORD}" ]; then
+        echo 'Redis data-plane and Sentinel management passwords must be independent' >&2
+        exit 2
+      fi
+      case "$${REDIS_SENTINEL_MASTER}" in
+        ''|*[!A-Za-z0-9_-]*) echo 'invalid Redis Sentinel master name' >&2; exit 2 ;;
+      esac
+      validate_link_local_ipv4() {
+        printf '%s\n' "$$1" | awk -F. 'NR != 1 || NF != 4 { invalid = 1 } { for (i = 1; i <= 4; i++) if ($$i !~ /^[0-9]+$$/ || $$i + 0 > 255) invalid = 1; if ($$1 + 0 != 169 || $$2 + 0 != 254) invalid = 1 } END { exit invalid ? 1 : 0 }'
+      }
+      redis_ip="$${REDIS_SENTINEL_PRIMARY_ADDRESS}"
+      replica_ip="$${REDIS_SENTINEL_REPLICA_ADDRESS}"
+      sentinel_ip="$${SENTINEL_ANNOUNCE_ADDRESS}"
+      for address in "$$redis_ip" "$$replica_ip" "$$sentinel_ip"; do
+        validate_link_local_ipv4 "$$address" || { echo 'Sentinel topology addresses must be link-local IPv4 addresses' >&2; exit 2; }
+      done
+      if [ "$$redis_ip" = "$$replica_ip" ] || [ "$$redis_ip" = "$$sentinel_ip" ] || [ "$$replica_ip" = "$$sentinel_ip" ]; then
+        echo 'Sentinel topology addresses must be distinct' >&2
+        exit 2
+      fi
+      config=/data/sentinel.conf
+      identity_file=/data/master-identity
+      selected=''
+      if [ -s "$$config" ]; then
+        monitor_target="$$(awk -v master="$${REDIS_SENTINEL_MASTER}" '$$1 == "sentinel" && $$2 == "monitor" && $$3 == master { print $$4 }' "$$config")"
+        case "$$monitor_target" in
+          redis) selected=redis ;;
+          redis-replica) selected=redis-replica ;;
+          *)
+            if [ "$$monitor_target" = "$$redis_ip" ]; then
+              selected=redis
+            elif [ "$$monitor_target" = "$$replica_ip" ]; then
+              selected=redis-replica
+            fi
+            ;;
+        esac
+      fi
+      if [ -z "$$selected" ] && [ -s "$$identity_file" ]; then
+        IFS= read -r selected <"$$identity_file"
+      fi
+      if [ -z "$$selected" ] && [ ! -s "$$config" ] && [ ! -e "$$identity_file" ]; then
+        selected=redis
+      fi
+      case "$$selected" in
+        redis) master_ip="$$redis_ip" ;;
+        redis-replica) master_ip="$$replica_ip" ;;
+        *) echo 'missing or invalid persisted Redis master identity' >&2; exit 1 ;;
+      esac
+      umask 077
+      identity_temp="$$(mktemp /data/.master-identity.XXXXXX)"
+      printf '%s\n' "$$selected" >"$$identity_temp"
+      chmod 0600 "$$identity_temp"
+      mv -f "$$identity_temp" "$$identity_file"
+      if [ ! -s "$$config" ]; then
+        cat >"$$config" <<EOF
+        port 26379
+        sentinel monitor $${REDIS_SENTINEL_MASTER} $$master_ip 6379 2
+        sentinel down-after-milliseconds $${REDIS_SENTINEL_MASTER} 5000
+        sentinel failover-timeout $${REDIS_SENTINEL_MASTER} 15000
+        sentinel parallel-syncs $${REDIS_SENTINEL_MASTER} 1
+        sentinel resolve-hostnames no
+        sentinel announce-hostnames no
+        sentinel announce-ip $$sentinel_ip
+        sentinel announce-port 26379
+        sentinel auth-pass $${REDIS_SENTINEL_MASTER} $${REDIS_PASSWORD}
+        sentinel client-reconfig-script $${REDIS_SENTINEL_MASTER} /usr/local/bin/redis-sentinel-reconfig.sh
+        sentinel deny-scripts-reconfig yes
       EOF
-      exec redis-sentinel /tmp/sentinel.conf
+      fi
+      monitor_count="$$(awk -v master="$${REDIS_SENTINEL_MASTER}" '$$1 == "sentinel" && $$2 == "monitor" && $$3 == master { count++ } END { print count + 0 }' "$$config")"
+      if [ "$$monitor_count" -ne 1 ]; then
+        echo 'Sentinel state must contain exactly one monitored master' >&2
+        exit 1
+      fi
+      sed -i "s#^sentinel monitor $${REDIS_SENTINEL_MASTER} [^ ]* 6379 2$$#sentinel monitor $${REDIS_SENTINEL_MASTER} $$master_ip 6379 2#" "$$config"
+      if grep -q "^sentinel auth-pass $${REDIS_SENTINEL_MASTER} " "$$config"; then
+        sed -i "s#^sentinel auth-pass $${REDIS_SENTINEL_MASTER} .*#sentinel auth-pass $${REDIS_SENTINEL_MASTER} $${REDIS_PASSWORD}#" "$$config"
+      else
+        printf 'sentinel auth-pass %s %s\n' "$${REDIS_SENTINEL_MASTER}" "$${REDIS_PASSWORD}" >>"$$config"
+      fi
+      if grep -q '^requirepass ' "$$config"; then
+        sed -i "s#^requirepass .*#requirepass $${REDIS_SENTINEL_PASSWORD}#" "$$config"
+      else
+        printf 'requirepass %s\n' "$${REDIS_SENTINEL_PASSWORD}" >>"$$config"
+      fi
+      if grep -q '^sentinel resolve-hostnames ' "$$config"; then
+        sed -i 's#^sentinel resolve-hostnames .*#sentinel resolve-hostnames no#' "$$config"
+      else
+        printf 'sentinel resolve-hostnames no\n' >>"$$config"
+      fi
+      if grep -q '^sentinel announce-hostnames ' "$$config"; then
+        sed -i 's#^sentinel announce-hostnames .*#sentinel announce-hostnames no#' "$$config"
+      else
+        printf 'sentinel announce-hostnames no\n' >>"$$config"
+      fi
+      if grep -q '^sentinel announce-ip ' "$$config"; then
+        sed -i "s#^sentinel announce-ip .*#sentinel announce-ip $$sentinel_ip#" "$$config"
+      else
+        printf 'sentinel announce-ip %s\n' "$$sentinel_ip" >>"$$config"
+      fi
+      if grep -q "^sentinel client-reconfig-script $${REDIS_SENTINEL_MASTER} " "$$config"; then
+        sed -i "s#^sentinel client-reconfig-script $${REDIS_SENTINEL_MASTER} .*#sentinel client-reconfig-script $${REDIS_SENTINEL_MASTER} /usr/local/bin/redis-sentinel-reconfig.sh#" "$$config"
+      else
+        printf 'sentinel client-reconfig-script %s /usr/local/bin/redis-sentinel-reconfig.sh\n' "$${REDIS_SENTINEL_MASTER}" >>"$$config"
+      fi
+      sed -i "/^sentinel known-sentinel $${REDIS_SENTINEL_MASTER} /d" "$$config"
+      sed -i "/^sentinel known-replica $${REDIS_SENTINEL_MASTER} /d" "$$config"
+      chmod 0600 "$$config"
+      exec redis-sentinel "$$config"
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - >-
+        REDISCLI_AUTH="$${REDIS_SENTINEL_PASSWORD}" redis-cli --raw -p 26379
+        SENTINEL CKQUORUM "$${REDIS_SENTINEL_MASTER}" | grep -q '^OK'
+    interval: 5s
+    timeout: 3s
+    retries: 12
+    start_period: 10s
 
 services:
+  backend:
+    environment:
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_DB: ${REDIS_DB:-0}
+    depends_on:
+      redis-sentinel-quorum:
+        condition: service_completed_successfully
+    networks:
+      default:
+        link_local_ips:
+          - ${REDIS_SENTINEL_BACKEND_ADDRESS:-169.254.240.30}
+
+  redis:
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PRIMARY_ADDRESS: ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+      REDIS_SENTINEL_REPLICA_ADDRESS: ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
+      REDIS_NODE_NAME: redis
+    volumes:
+      - ./scripts/redis-sentinel-bootstrap.sh:/usr/local/bin/redis-sentinel-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-sentinel-bootstrap.sh"]
+    command: []
+    networks:
+      default:
+        link_local_ips:
+          - ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+
   redis-replica:
     image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
-    # 与主库同一口令：masterauth 用于同步，requirepass 保证故障切换后
-    # 新 master 口令一致（backend 内置连接串带同一密码）。
-    command:
-      - |
-        exec redis-server --replicaof redis 6379 --appendonly no \
-          --masterauth ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD} --requirepass ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
-    depends_on:
-      redis:
-        condition: service_healthy
+    user: "999:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PRIMARY_ADDRESS: ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+      REDIS_SENTINEL_REPLICA_ADDRESS: ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
+      REDIS_NODE_NAME: redis-replica
+    volumes:
+      - redisreplicadata:/data
+      - ./scripts/redis-sentinel-bootstrap.sh:/usr/local/bin/redis-sentinel-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-sentinel-bootstrap.sh"]
+    command: []
+    depends_on: {}
+    networks:
+      default:
+        link_local_ips:
+          - ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD} ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --raw ping | grep -qx PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   redis-sentinel-1:
     <<: *sentinel-common
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PRIMARY_ADDRESS: ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+      REDIS_SENTINEL_REPLICA_ADDRESS: ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
+      SENTINEL_ANNOUNCE_ADDRESS: ${REDIS_SENTINEL_1_ADDRESS:-169.254.240.21}
+    volumes:
+      - redissentinel1data:/data
+      - ./scripts/redis-sentinel-reconfig.sh:/usr/local/bin/redis-sentinel-reconfig.sh:ro
+    networks:
+      default:
+        link_local_ips:
+          - ${REDIS_SENTINEL_1_ADDRESS:-169.254.240.21}
 
   redis-sentinel-2:
     <<: *sentinel-common
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PRIMARY_ADDRESS: ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+      REDIS_SENTINEL_REPLICA_ADDRESS: ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
+      SENTINEL_ANNOUNCE_ADDRESS: ${REDIS_SENTINEL_2_ADDRESS:-169.254.240.22}
+    volumes:
+      - redissentinel2data:/data
+      - ./scripts/redis-sentinel-reconfig.sh:/usr/local/bin/redis-sentinel-reconfig.sh:ro
+    networks:
+      default:
+        link_local_ips:
+          - ${REDIS_SENTINEL_2_ADDRESS:-169.254.240.22}
 
   redis-sentinel-3:
     <<: *sentinel-common
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PRIMARY_ADDRESS: ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+      REDIS_SENTINEL_REPLICA_ADDRESS: ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
+      SENTINEL_ANNOUNCE_ADDRESS: ${REDIS_SENTINEL_3_ADDRESS:-169.254.240.23}
+    volumes:
+      - redissentinel3data:/data
+      - ./scripts/redis-sentinel-reconfig.sh:/usr/local/bin/redis-sentinel-reconfig.sh:ro
+    networks:
+      default:
+        link_local_ips:
+          - ${REDIS_SENTINEL_3_ADDRESS:-169.254.240.23}
+
+  redis-sentinel-quorum:
+    image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
+    restart: "no"
+    user: "999:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PRIMARY_ADDRESS: ${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}
+      REDIS_SENTINEL_REPLICA_ADDRESS: ${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}
+      REDIS_SENTINEL_BOOTSTRAP_MODE: gate
+    volumes:
+      - ./scripts/redis-sentinel-bootstrap.sh:/usr/local/bin/redis-sentinel-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-sentinel-bootstrap.sh"]
+    command: []
+    networks:
+      default:
+        link_local_ips:
+          - ${REDIS_SENTINEL_GATE_ADDRESS:-169.254.240.31}
+    depends_on:
+      redis:
+        condition: service_started
+      redis-replica:
+        condition: service_started
+      redis-sentinel-1:
+        condition: service_started
+      redis-sentinel-2:
+        condition: service_started
+      redis-sentinel-3:
+        condition: service_started
+
+volumes:
+  redisreplicadata:
+  redissentinel1data:
+  redissentinel2data:
+  redissentinel3data:

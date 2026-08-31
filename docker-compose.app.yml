@@ -4,7 +4,9 @@
 # PostgreSQL custom-format 快照到 Compose 项目隔离的 pgbackups 卷。
 #
 # 从源码构建并启动：docker compose up -d --build（使用 docker-compose.yml）
-# 使用预构建镜像启动：docker compose -f docker-compose.app.yml up -d
+# 官方预构建部署必须在 .env 中把 BACKEND_IMAGE/NGINX_IMAGE 设为已验证的
+# GHCR @sha256 RepoDigest；默认的本地版本 tag 仅供源码构建与离线编排。
+# 启动：docker compose -f docker-compose.app.yml up -d
 # backend entrypoint 会自动迁移空库并按 DEMO_DATA_ENABLED 决定是否写入虚构数据。
 #
 # 离线包：由 build-offline.sh 自动打包，内网直接运行。
@@ -23,6 +25,9 @@ services:
     restart: unless-stopped
     logging: *default-logging
     shm_size: 256mb
+    # Start as the image's postgres account instead of entering as root and
+    # invoking gosu. This is also a compensating control for SEC-2026-001.
+    user: "70:70"
     environment:
       POSTGRES_DB: openapi_platform
       POSTGRES_USER: platform
@@ -36,6 +41,14 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./postgres/config/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/run/postgresql:size=16m,uid=70,gid=70,mode=3775
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     command: >
       postgres
       -c config_file=/etc/postgresql/postgresql.conf
@@ -66,6 +79,18 @@ services:
       - pgbackups:/backups
       - ./postgres/backup-loop.sh:/backup-loop.sh:ro
       - ./postgres/backup-healthcheck.sh:/backup-healthcheck.sh:ro
+    # The custom shell entrypoint never invokes gosu. Root is retained only to
+    # assign the backend reader group on new snapshots; every other capability
+    # is removed and the image filesystem is immutable.
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,20 +107,31 @@ services:
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging
+    # Skip the image's root entrypoint branch and run directly as redis.
+    user: "999:1000"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--requirepass", "${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}"]
     volumes:
       - redisdata:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     # 仅绑回环，不暴露到 LAN
     ports:
       - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD} ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --raw ping | grep -qx PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   backend:
-    image: ${BACKEND_IMAGE:-apiplatform-backend:latest}
+    image: ${BACKEND_IMAGE:-apiplatform-backend:1.0.1}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging
@@ -110,6 +146,10 @@ services:
       DATABASE_URL: postgresql+psycopg://platform:${POSTGRES_PASSWORD:?请在 .env 中设置随机 POSTGRES_PASSWORD}@postgres:5432/openapi_platform
       REDIS_URL: redis://:${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}@redis:6379/0
       REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_CONNECT_TIMEOUT_S: ${REDIS_CONNECT_TIMEOUT_S:-2}
+      REDIS_SOCKET_TIMEOUT_S: ${REDIS_SOCKET_TIMEOUT_S:-2}
+      RATE_LIMIT_ADMISSION_TIMEOUT_S: ${RATE_LIMIT_ADMISSION_TIMEOUT_S:-3}
       JWT_SECRET: ${JWT_SECRET:?请在 .env 中设置随机 JWT_SECRET}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?请在 .env 中设置独立的 32 字节 base64url DATA_ENCRYPTION_KEY}
       JWT_ISSUER: ${JWT_ISSUER:-open-api-platform}
@@ -119,7 +159,7 @@ services:
       USER_SESSION_COOKIE: ${USER_SESSION_COOKIE:-platform_session}
       ADMIN_SESSION_COOKIE: ${ADMIN_SESSION_COOKIE:-platform_admin_session}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?请在 .env 中设置由至少 32 个随机字节生成的 ADMIN_BOOTSTRAP_TOKEN}
       ADMIN_SENSITIVE_ACTION_MAX_AGE_S: ${ADMIN_SENSITIVE_ACTION_MAX_AGE_S:-600}
       ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD: ${ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD:-false}
       BACKUP_INTERVAL_S: ${BACKUP_INTERVAL_S:-3600}
@@ -130,6 +170,15 @@ services:
       # 开源发行版默认展示完全虚构的看板数据；任一用户/Key 已存在时自动跳过。
       DEMO_DATA_ENABLED: ${DEMO_DATA_ENABLED:-true}
       UPSTREAM_TLS_VERIFY: ${UPSTREAM_TLS_VERIFY:-true}
+      # 无限流量绕过默认关闭；仅在完成容量隔离与滥用风险评估后显式开启。
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-600}
+      RATE_LIMIT_TPM: ${RATE_LIMIT_TPM:-6000000}
+      RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS: ${RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS:-4096}
+      NIGHT_UNLIMITED_ENABLED: ${NIGHT_UNLIMITED_ENABLED:-false}
+      NIGHT_UNLIMITED_START: ${NIGHT_UNLIMITED_START:-19:00}
+      NIGHT_UNLIMITED_END: ${NIGHT_UNLIMITED_END:-07:30}
+      PLATFORM_TIMEZONE: ${PLATFORM_TIMEZONE:-Asia/Shanghai}
+      RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED: ${RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED:-false}
       USAGE_FAILOVER_DIR: /var/lib/apiplatform/usage
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
@@ -176,7 +225,7 @@ services:
 
   # ── 监控（Prometheus 抓 backend:8000/metrics，Grafana 出看板）─────────────────
   prometheus:
-    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69}
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging
@@ -250,7 +299,7 @@ services:
       start_period: 30s
 
   nginx:
-    image: ${NGINX_IMAGE:-apiplatform-nginx:latest}
+    image: ${NGINX_IMAGE:-apiplatform-nginx:1.0.1}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging

@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.auth import optional_user_session, require_user
+from app.auth_rate_limit import client_identity
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.platform_settings import get_branding_config
@@ -27,7 +28,7 @@ from app.models import (
 from app.redis_client import redis
 from app.heatmap_stats import build_cumulative_heatmap, build_month_heatmap, build_week_heatmap
 from app.scenario_name import assert_scenario_name_available
-from app.platform_usage_stats import all_key_ids, build_context_length, build_tool_calls
+from app.platform_usage_stats import build_context_length, build_tool_calls
 from app.stats_breakdown import query_public_breakdown
 from app.tier_flow import UPGRADE_TARGETS, can_upgrade_to
 
@@ -114,6 +115,11 @@ async def _check_public_status_rate(request: Request) -> None:
         )
 
 
+async def _public_status_rate_dependency(request: Request) -> None:
+    """Apply the same abuse boundary to every public status query."""
+    await _check_public_status_rate(request)
+
+
 def _yoy(cur: int, prev: int) -> float | None:
     """同比增长百分比。去年同期无记录（prev 为 0）时返回 None，前端显示 —；
     避免除零与把"平台还没跑满一年"误算成虚高增长。"""
@@ -121,10 +127,10 @@ def _yoy(cur: int, prev: int) -> float | None:
 
 
 def _client_ip(request: Request) -> str:
-    real = request.headers.get("x-real-ip")
-    if real:
-        return real.strip()
-    return request.client.host if request.client else "unknown"
+    # Only trust forwarded addresses when the deployment explicitly declares a
+    # trusted reverse-proxy boundary. Direct deployments must not let callers
+    # rotate X-Real-IP to evade public or authentication rate limits.
+    return client_identity(request)
 
 
 async def _check_apply_rate(identity: str) -> None:
@@ -536,6 +542,7 @@ def platform_status_breakdown(
     filter_dimension: str | None = None,
     filter_value: str | None = None,
     db: Session = Depends(get_db),
+    _rate: None = Depends(_public_status_rate_dependency),
 ):
     """状态页"查看全部"的分页/搜索接口——只开放 project/model/scene 三个非敏感
     维度，不含 user/department、不含成本，口径与 platform_status() 一致。
@@ -574,18 +581,20 @@ def platform_status_breakdown(
 def platform_status_tool_calls(
     days: int = Query(default=30, ge=1, le=90),
     db: Session = Depends(get_db),
+    _rate: None = Depends(_public_status_rate_dependency),
 ):
     """状态页 Tool Call 分布：全平台 session 分桶，口径与 user/admin 看板一致。"""
-    return build_tool_calls(db, key_ids=all_key_ids(db), days=days)
+    return build_tool_calls(db, key_ids=None, days=days)
 
 
 @router.get("/public/platform-status/context-length")
 def platform_status_context_length(
     days: int = Query(default=30, ge=1, le=90),
     db: Session = Depends(get_db),
+    _rate: None = Depends(_public_status_rate_dependency),
 ):
     """状态页上下文长度分布：全平台 prompt tokens 分桶。"""
-    return build_context_length(db, key_ids=all_key_ids(db), days=days)
+    return build_context_length(db, key_ids=None, days=days)
 
 
 @router.get("/public/platform-status/heatmap")
@@ -593,6 +602,7 @@ def platform_status_heatmap(
     mode: str = Query(default="week", description="week | month | cumulative"),
     date: str | None = Query(default=None, description="锚点日期（平台本地时区）；周/月模式使用"),
     db: Session = Depends(get_db),
+    _rate: None = Depends(_public_status_rate_dependency),
 ):
     """状态页调用热力图。
 

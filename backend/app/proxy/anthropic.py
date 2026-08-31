@@ -14,7 +14,7 @@ import json
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -34,8 +34,13 @@ from app.proxy.common import (
 from app.session_stats import resolve_tool_calls_count
 from app.auth import normalize_client_auth
 from app.proxy.db_bridge import prepare_proxy_request
+from app.proxy.request_body import parse_json_object, read_json_object
 from app.proxy.routing import select_endpoint
-from app.proxy.token_estimate import estimate_prompt_tokens, estimate_prompt_tokens_async
+from app.proxy.token_estimate import (
+    estimate_prompt_tokens,
+    estimate_prompt_tokens_async,
+    estimate_reservation_tokens_async,
+)
 from app.proxy.usage import estimate_cost, extract_response_text_any, extract_usage, finalize_stream_usage
 from app.request_context import with_upstream_request_headers
 from app.usage_writer import usage_writer
@@ -246,7 +251,7 @@ def _count_from_raw(raw: bytes) -> int:
     估算就要 ~550ms。留在事件循环里做，一个请求就能让整个 worker 停摆半秒；
     放进线程池后只占一个线程，其余请求照常收发。
     """
-    return max(1, estimate_prompt_tokens(json.loads(raw)))
+    return max(1, estimate_prompt_tokens(parse_json_object(raw)))
 
 
 @router.post("/messages/count_tokens")
@@ -271,10 +276,7 @@ async def count_tokens(
     client_auth = normalize_client_auth(authorization, x_api_key)
     key = await async_validate_api_key(client_auth)
     await policy.enforce_pre(key, request, db, 0)
-    try:
-        return {"input_tokens": await asyncio.to_thread(_count_from_raw, raw)}
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise HTTPException(status_code=400, detail=f"请求体不是合法 JSON: {exc}") from exc
+    return {"input_tokens": await asyncio.to_thread(_count_from_raw, raw)}
 
 
 @router.post("/messages")
@@ -285,14 +287,16 @@ async def messages(
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
     anthropic_version: str | None = Header(default=None),
 ):
-    body = await request.json()
+    body = await read_json_object(request)
     forward_headers = _anthropic_forward_headers(request, anthropic_version)
     request_url = getattr(request, "url", None)
     query_string = getattr(request_url, "query", "") or ""
     client_auth = normalize_client_auth(authorization, x_api_key)
     prep = await prepare_proxy_request(client_auth, body.get("model"))
     # TPM 预扣：A社 格式（system/content blocks/tools）同样计入估算
-    reserved = await policy.enforce_pre(prep.key, request, db, await estimate_prompt_tokens_async(body), model=prep.model)
+    reserved = await policy.enforce_pre(
+        prep.key, request, db, await estimate_reservation_tokens_async(body), model=prep.model,
+    )
 
     try:
         return await _attempt(

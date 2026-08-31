@@ -15,6 +15,14 @@
       internal addresses, or organization-specific branding are included.
 - [ ] Authorization, error, and rollback paths were considered.
 - [ ] Dependency and container changes use pinned, reviewable versions.
+- [ ] A new endpoint, identity, secret, data store, extension hook, deployment
+      mode, privileged job, or artifact channel updates the threat model and
+      ASVS evidence in the same pull request.
+- [ ] Authentication, authorization, cryptography, bootstrap, migration,
+      backup/restore, and release-pipeline changes received an independent
+      security review, or the missing reviewer is recorded as a release blocker.
+- [ ] Any accepted finding links a complete, approved, unexpired security
+      exception based on `docs/SECURITY_EXCEPTION_TEMPLATE.md`.
 
 ## Compatibility and operations
 

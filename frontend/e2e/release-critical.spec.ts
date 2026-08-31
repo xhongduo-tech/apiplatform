@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 const ADMIN_PASSWORD = "E2e-Admin-Password-2026!";
-const BOOTSTRAP_TOKEN = "e2e-bootstrap-token-release-check-2026";
+const ROTATED_ADMIN_PASSWORD = "E2e-Rotated-Password-2026!";
+const BOOTSTRAP_TOKEN = "e2e-bootstrap-token-release-check-2026-08-31-at-least-32-bytes";
 
-test("first claim, branding, key lifecycle, streaming gateway and logout", async ({ page }) => {
+test("first claim, branding, key lifecycle, streaming, password rotation and logout", async ({ page }) => {
   await page.goto("/admin.html");
 
   const newPasswordInputs = page.locator('input[autocomplete="new-password"]');
@@ -16,7 +17,9 @@ test("first claim, branding, key lifecycle, streaming gateway and logout", async
     (response) => response.url().endsWith("/api/admin/login") && response.request().method() === "POST",
   );
   await page.locator("form button[type=submit]").click();
-  expect((await loginResponse).status()).toBe(200);
+  const login = await loginResponse;
+  expect(login.status()).toBe(200);
+  const originalAdminToken = (await login.json()).token as string;
   await expect(page.locator("aside")).toBeVisible();
 
   const initialized = await page.request.get("/api/admin/login/status");
@@ -114,6 +117,23 @@ test("first claim, branding, key lifecycle, streaming gateway and logout", async
     data: { model: modelId, messages: [{ role: "user", content: "must fail" }] },
   });
   expect(rejected.status()).toBe(401);
+
+  await page.getByRole("button", { name: "管理员安全" }).click();
+  await page.locator('input[autocomplete="current-password"]').fill(ADMIN_PASSWORD);
+  const rotatedInputs = page.locator('input[autocomplete="new-password"]');
+  await expect(rotatedInputs).toHaveCount(2);
+  await rotatedInputs.nth(0).fill(ROTATED_ADMIN_PASSWORD);
+  await rotatedInputs.nth(1).fill(ROTATED_ADMIN_PASSWORD);
+  const rotationResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/api/admin/change-password") && response.request().method() === "POST",
+  );
+  await page.locator("form button[type=submit]").click();
+  expect((await rotationResponse).status()).toBe(200);
+  expect((await page.request.get("/api/admin/session", {
+    headers: { Authorization: `Bearer ${originalAdminToken}` },
+  })).status()).toBe(401);
+  const replacementSession = await page.request.get("/api/admin/session");
+  await expect(replacementSession).toBeOK();
 
   await expect(await page.request.post("/api/admin/logout")).toBeOK();
   expect((await page.request.get("/api/admin/session")).status()).toBe(401);

@@ -194,9 +194,16 @@ def test_cookie_session_rejects_cross_site_mutation_but_bearer_remains_compatibl
         yield user_db
 
     app.dependency_overrides[get_db] = _get_test_db
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://gateway.example:18080") as client:
         client.cookies.set(settings.USER_SESSION_COOKIE, token, path="/api")
         assert client.post("/api/protected").status_code == 200
+        assert client.post(
+            "/api/protected",
+            headers={
+                "Origin": "http://gateway.example:18080",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        ).status_code == 200
         assert client.post(
             "/api/protected", headers={"Origin": "https://attacker.example"},
         ).status_code == 403

@@ -1,0 +1,10 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "CVE-2025-68121",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    }
+  ]
+}

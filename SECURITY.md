@@ -20,9 +20,24 @@ impact, and any suggested mitigation. Maintainers should acknowledge a report
 within five business days, provide a status update at least every ten business
 days, and coordinate disclosure after a fix is available.
 
+Reports are triaged for exploitability and impact using CVSS as one input, not
+as an automatic decision. The maintainer reproduces the issue privately,
+prepares tests and a fix on a restricted advisory fork, identifies affected
+versions and workarounds, and agrees a disclosure date with the reporter. A
+confirmed vulnerability is published through a GitHub Security Advisory and a
+signed patched release. Critical incidents also require credential/signing-key
+impact review, release withdrawal when integrity is uncertain, and a written
+retrospective. Community response targets are operational goals rather than a
+contractual SLA; a commercial agreement may define stricter terms.
+
+The engineering control baseline, threat assumptions, and ASVS coverage are
+versioned in `docs/SECURITY_BASELINE.md`, `docs/THREAT_MODEL.md`, and
+`docs/ASVS-5.0-L2.md`. They are not claims of certification.
+
 ## Deployment baseline
 
-- Keep the console bound to loopback until administrator bootstrap is complete.
+- Set a unique `ADMIN_BOOTSTRAP_TOKEN` before a production instance starts and
+  keep the console bound to loopback until administrator bootstrap is complete.
 - Generate independent database, Redis, JWT, bootstrap and data-encryption
   secrets for every deployment.
 - Terminate TLS at a trusted reverse proxy and keep PostgreSQL, Redis,

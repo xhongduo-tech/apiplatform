@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import ApiKeyORM, UserORM
+from app.models import ApiKeyORM, PlatformSettingORM, UserORM
 
 _ALGO = "HS256"
 KEY_PREFIX = settings.API_KEY_PREFIX
@@ -309,6 +309,7 @@ def require_admin(
     request: Request,
     authorization: str | None = Header(default=None),
     session_cookie: str | None = Cookie(default=None, alias=settings.ADMIN_SESSION_COOKIE),
+    db: Session = Depends(get_db),
 ) -> dict:
     _enforce_cookie_request_origin(request, authorization, session_cookie)
     token = _request_token(authorization, session_cookie)
@@ -319,6 +320,17 @@ def require_admin(
         raise HTTPException(status_code=403, detail="需要管理员权限")
     if claims.get("token_type") != "admin_session":
         raise HTTPException(status_code=401, detail="登录态类型无效")
+    credential = db.get(PlatformSettingORM, "admin_credentials")
+    value = credential.value if credential is not None and isinstance(credential.value, dict) else {}
+    if not isinstance(value.get("password_hash"), str) or not value["password_hash"]:
+        raise HTTPException(status_code=401, detail="管理员凭据尚未初始化")
+    try:
+        token_version = int(claims.get("ver", -1))
+        current_version = max(0, int(value.get("token_version", 0)))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="管理员登录态版本无效") from exc
+    if token_version != current_version:
+        raise HTTPException(status_code=401, detail="管理员登录态已失效，请重新登录")
     return claims
 
 

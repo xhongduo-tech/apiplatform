@@ -27,6 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.early_access import EARLY_ACCESS_STATUS
+from app.model_secrets import normalize_custom_headers
 from app.models import ModelRegistryORM
 from app.proxy.fallback import get_config as get_fallback_config
 from app.request_context import with_upstream_request_headers
@@ -44,6 +45,17 @@ _MODEL_OVERRIDES: dict[str, dict[str, Any]] = {}
 
 # 进程内轮询计数器（asyncio 单线程，无需锁）
 _ep_counters: dict[str, int] = {}
+
+
+def _validated_custom_headers(value, *, model_id: str) -> dict[str, str] | None:
+    """Fail closed for legacy rows written before header validation existed."""
+    try:
+        return normalize_custom_headers(value, where=f"model {model_id} custom_headers")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"模型 {model_id} 的上游请求头配置无效",
+        ) from exc
 
 
 def normalize_model_ref(value: str) -> str:
@@ -303,7 +315,9 @@ def select_endpoint(model_record: ModelRegistryORM) -> dict:
             "api_key": api_key,
             "model_api_name": model_api_name,
             "import_format": imp_fmt,
-            "custom_headers": custom_headers,
+            "custom_headers": _validated_custom_headers(
+                custom_headers, model_id=model_record.id,
+            ),
             "upstream_path": _pick("upstream_path", "upstreamPath", None),
         }
     return {
@@ -312,7 +326,9 @@ def select_endpoint(model_record: ModelRegistryORM) -> dict:
         "api_key": model_record.api_key,
         "model_api_name": model_record.model_api_name,
         "import_format": model_record.import_format or "openai",
-        "custom_headers": model_record.custom_headers,
+        "custom_headers": _validated_custom_headers(
+            model_record.custom_headers, model_id=model_record.id,
+        ),
         "upstream_path": None,  # 交给 _effective_path 回退 extra.upstream_path / 默认后缀
     }
 
@@ -342,7 +358,9 @@ def eff_from_endpoint_dict(model_record: ModelRegistryORM, ep_idx: int, ep: dict
         "api_key": api_key,
         "model_api_name": model_api_name,
         "import_format": imp_fmt,
-        "custom_headers": custom_headers,
+        "custom_headers": _validated_custom_headers(
+            custom_headers, model_id=model_record.id,
+        ),
         "upstream_path": _pick("upstream_path", "upstreamPath", None),
     }
 

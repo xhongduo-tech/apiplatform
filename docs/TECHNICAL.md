@@ -55,7 +55,7 @@ Client ──► nginx ──► FastAPI 网关 ──► PostgreSQL（注册表
 ### 1.3 本文贡献
 
 - 论证并实践了**「调度权归引擎」**的极简网关架构：网关只做限流、路由与如实转发，并发调度完全委托推理引擎的 continuous batching，过载可观测性由 TTFT 膨胀比结果信号承担；
-- 设计了**原子预扣 + 事后校正 + 失败返还**的 TPM 限流算法，消除空桶 TOCTOU 竞态，同时允许超大请求空桶放行；所有协调层操作失败即放行（fail-open）；
+- 设计了**原子预扣 + 事后校正 + 失败返还**的 TPM 限流算法，消除空桶 TOCTOU 竞态；预扣覆盖 prompt、最大输出和多候选放大，单请求超限直接拒绝；Redis 无法在总超时内确认准入状态时 fail-closed 返回可重试的 503；
 - 提出**取消安全执行器 `guarded()`**，解决流式响应客户端断连时清理与计量丢失的问题；
 - 给出可复现的测试、容量标定与故障演练方法；发行版不预置任何生产测量数据。
 
@@ -65,9 +65,9 @@ Client ──► nginx ──► FastAPI 网关 ──► PostgreSQL（注册表
 
 | 原则 | 具体含义 | 实现位置 |
 |---|---|---|
-| **稳定优先，fail-open** | Redis/PG 异常时放行或降级，绝不让协调层抖动变成业务 500 | `policy.py`、`redis_client.py` |
+| **明确的故障边界** | 限流准入状态未知时返回可重试 503；响应后的计量校正与辅助熔断状态 best-effort | `policy.py`、`redis_client.py` |
 | **调度权归引擎** | 网关不设并发上限、不排队、不预检；引擎的 continuous batching 是唯一调度器，过载状态如实透传 | `proxy/`（直连转发） |
-| **任何输入都有输出** | TPM 空桶放行超大请求 | `policy.py` |
+| **预算不可绕过** | 参数别名、多候选与空桶均不能绕过 TPM；超大输入需缩短或申请明确限额 | `policy.py`、`token_estimate.py` |
 | **奥卡姆剃刀** | 不在网关重复实现推理引擎已有的排队与 KV 准入，收敛为限流 + 轮询 + 如实转发 | 全局 |
 | **安全配置** | 开发默认与生产凭据分离；生产缺少必需变量时拒绝启动 | `config.py`、`main.py` |
 | **展示与管控同源** | 前端所有限额/状态数字来自后端实时下发，禁止硬编码 | `public.py`、前端 `gateway.ts` |
@@ -290,7 +290,7 @@ async def prepare_proxy_request(authorization, requested):
 
 ### 5.2 策略校验（详见 §6）
 
-`policy.enforce_pre()` 执行 RPM → TPM 预扣（夜间不限流窗口内跳过）。返回 `reserved`（预扣 token 数），调用方最终传给 `record_tokens()` 做差额校正。
+`policy.enforce_pre()` 执行 RPM → TPM 预扣（夜间不限流窗口内跳过）。返回与 `int` 兼容、同时绑定准入分钟桶的 `TokenReservation`，调用方最终原样传给 `record_tokens()` / `refund_tokens()`；跨分钟完成仍只校正原桶。
 
 ### 5.3 节点选择与转发（详见 §8）
 
@@ -308,7 +308,7 @@ async def prepare_proxy_request(authorization, requested):
 
 ## 6. 限流体系与夜间窗口
 
-对每个 API Key 生效 RPM/TPM 定窗计数，经 Redis 跨副本一致，**所有 Redis 操作 fail-open**。每日 19:00–次日 07:30（平台时区，`NIGHT_UNLIMITED_*` 可配）为夜间不限流窗口：窗口内跳过 RPM/TPM 检查与 TPM 预扣。
+对每个 API Key 生效 RPM/TPM 定窗计数，经 Redis 跨副本一致。Redis 连接/命令与整段准入均有超时；无法确认时返回 `503` 与 `Retry-After: 5`。生产全局 RPM/TPM 必须大于零（单 Key `-1` 不限流是独立的显式授权）。夜间不限流安全默认关闭；启用时 production preflight 强制校验 IANA 时区与严格 `HH:MM` 起止时间。embedding/reranker 的模型豁免同样默认关闭。
 
 | 机制 | 违规响应 |
 |---|---|
@@ -331,22 +331,24 @@ if n > rpm_limit:
 
 ### 6.2 TPM：原子预扣 + 事后校正 + 失败返还
 
-设 `C_tpm` 为单 Key 的 TPM 上限（key.tpm_limit 或平台默认 6,000,000），`est` 为本次请求 prompt 侧 token 估算（见 §8.2）。
+设 `C_tpm` 为单 Key 的 TPM 上限（key.tpm_limit 或平台默认 6,000,000），`est = prompt_estimate + max_output × max(n, best_of, 1)`。最大输出覆盖 Chat/Completions/Responses/Anthropic 及兼容别名；省略或非法值使用安全默认。
 
 **步骤 1：原子预扣**
 
 ```python
+if est > C_tpm:                # 写桶前拒绝，空桶不例外
+    raise 429(...)
 n = redis.incrby(tk, est)      # tk = rl:tpm:{key_id}:{bucket}
 redis.expire(tk, 70)
 before = n - est
-if before >= C_tpm or (before > 0 and est > 0 and n > C_tpm):
-    redis.decrby(tk, est)      # 回退本次预扣
+if before >= C_tpm or n > C_tpm:
+    atomic_clamped_adjust(tk, -est)
     raise 429(...)
-reserved = est
+reserved = TokenReservation(est, bucket)
 ```
 
 - 先 `INCRBY` 再判定，消除“多个大请求同时读到空桶全部放行”的 TOCTOU 竞态；
-- **空桶放行**：`before <= 0` 时无条件放行，允许单个超大请求独占本分钟预算（任何输入都应得到输出）。
+- **空桶同样受限**：单请求预算大于 TPM 时不会写入 Redis，也不会消耗 RPM；客户端必须降低最大输出、缩短输入或使用经审批的更高限额。
 
 **步骤 2：事后校正**
 
@@ -354,8 +356,7 @@ reserved = est
 
 ```python
 delta = total_tokens - reserved
-if delta > 0:
-    redis.incrby(tk, delta); redis.expire(tk, 70)
+atomic_clamped_adjust(original_bucket_key, delta)
 ```
 
 未拿到实际用量（流中断等）时不做校正——预扣值即作为记账，宁可略多计。
@@ -365,12 +366,10 @@ if delta > 0:
 若请求在产生上游消耗之前失败（连接失败 / 上游 4xx 且无 usage），归还预扣：
 
 ```python
-after = redis.decrby(tk, reserved)
-if after < 0:
-    redis.incrby(tk, -after)   # 桶已轮转时钳到 0，不会吞掉他人预扣
+atomic_clamped_adjust(original_bucket_key, -reserved)
 ```
 
-校正与返还均经 `guarded()` 执行，保证取消安全。
+Lua 原子校正确保计数永不为负；原桶已过期时返还是 no-op，绝不扣减当前分钟桶。校正与返还均经 `guarded()` 执行，保证取消安全。
 
 ### 6.3 单 Key 覆盖与并发档位
 
@@ -441,9 +440,9 @@ def pick_upstream(model):
     return _pick_round_robin(model.id, valid)
 ```
 
-### 8.2 Prompt Token 估算（`token_estimate.py`）
+### 8.2 Token 预扣估算（`token_estimate.py`）
 
-仅用于 TPM 原子预扣与 `/v1/messages/count_tokens` 端点，不参与任何路由或拒绝决策。无需 tokenizer，字符级快速估算（同步执行，不可阻塞事件循环）：
+Prompt 估算用于 TPM 原子预扣与 `/v1/messages/count_tokens`；生成型入口再加最大输出预算，并据此执行单请求 TPM 拒绝。无需 tokenizer，字符级快速估算（大请求移出事件循环）：
 
 - 中文（CJK）1 字符 ≈ 1 token；
 - 其他字符 3.5 字符 ≈ 1 token（向上取整）；
@@ -451,6 +450,8 @@ def pick_upstream(model):
 - 图片 content part 类型 `image/image_url/input_image` 按 1024 token；
 - 工具定义按 JSON 全文计；
 - 每条消息额外加 4 token 结构开销。
+
+输出预算识别 `max_tokens`、`max_completion_tokens`、`max_output_tokens` 及兼容字段；冲突别名取最大值，`n`/`best_of` 取最大候选倍率，缺失或非法值回落 `RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS`。
 
 覆盖全部请求格式：messages/system/prompt/input/instructions、tools 定义（JSON 全文）、assistant tool_calls 参数、多模态内容、rerank 的 query/documents。
 
@@ -525,8 +526,8 @@ cost = round((prompt_tokens * pin + completion_tokens * pout) / 1_000_000, 6)
 ### 11.1 管理后台（/admin.html）
 
 首次访问时由管理员输入并确认强密码，平台将版本化 PBKDF2 哈希写入
-`platform_settings` 表中 `key=admin_credentials` 的记录；可配置的一次性
-`ADMIN_BOOTSTRAP_TOKEN` 用于保护首次认领。后续密码验证成功后签发 4 小时 admin
+`platform_settings` 表中 `key=admin_credentials` 的记录；生产部署必须注入一次性
+高熵 `ADMIN_BOOTSTRAP_TOKEN` 保护首次认领。后续密码验证成功后签发 4 小时 admin
 会话，浏览器使用 HttpOnly/SameSite Cookie，Bearer JWT 仍兼容自动化客户端。
 源码、镜像和环境变量均不保存管理员明文口令。左侧分组侧边栏布局：
 
@@ -548,7 +549,7 @@ cost = round((prompt_tokens * pin + completion_tokens * pout) / 1_000_000, 6)
 
 ## 12. 配置体系
 
-开发环境有明确标记的本地默认值。生产环境必须显式设置 `DATABASE_URL`、`REDIS_URL`、`REDIS_PASSWORD` 和至少 32 字符的 `JWT_SECRET`，否则后端拒绝启动。
+开发环境有明确标记的本地默认值。生产环境必须显式设置 `DATABASE_URL`、`REDIS_URL`、`REDIS_PASSWORD`、至少 32 字符的 `JWT_SECRET`、独立数据加密密钥和至少 32 个随机字节生成的 `ADMIN_BOOTSTRAP_TOKEN`，否则后端拒绝启动。
 
 | 配置 | 示例 / 默认 | 说明 |
 |---|---|---|
@@ -556,17 +557,21 @@ cost = round((prompt_tokens * pin + completion_tokens * pout) / 1_000_000, 6)
 | `REDIS_URL` | `redis://:${REDIS_PASSWORD}@redis:6379/0` | |
 | `JWT_SECRET` | 部署时注入 | 管理员密码不走环境变量，首次访问后台时设置 |
 | `JWT_TTL_HOURS` / `USER_JWT_TTL_HOURS` | 4 / 8 | 管理员/用户会话时长，生产限制为 1–24 小时 |
-| `ADMIN_BOOTSTRAP_TOKEN` | 空（强烈建议生产设置） | 首次管理员认领的一次性附加口令 |
+| `ADMIN_BOOTSTRAP_TOKEN` | 生产必填 | 首次管理员认领的一次性高熵令牌；推荐 `openssl rand -hex 32` |
 | `ADMIN_SENSITIVE_ACTION_MAX_AGE_S` | 600 | 密钥、导出、原始备份与迁移等高风险动作的重新验证窗口 |
 | `ALLOW_PUBLIC_REGISTRATION` / `ALLOW_PASSWORD_RECOVERY` | false / false | 自助注册与 API Key 密码找回显式开关 |
 | `AUTH_CACHE_TTL_S` | 3.0 | 热路径鉴权缓存 |
 | `RATE_LIMIT_RPM` / `RATE_LIMIT_TPM` | 600 / 6,000,000 | 平台默认，可按 Key 覆盖 |
+| `RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS` | 4096 | 请求省略/误填输出上限时的 TPM 预扣预算 |
 | `RATE_LIMIT_HIGH_RPM` / `RATE_LIMIT_HIGH_TPM` | 3,000 / 60,000,000 | 「高并发」一键档位预设值 |
+| `NIGHT_UNLIMITED_ENABLED` | false | 高风险夜间绕过兼容开关，默认关闭 |
+| `RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED` | false | embedding/reranker 限流豁免，默认关闭 |
 | `GUNICORN_WORKERS` / `HTTPX_MAX_CONNECTIONS` | 4 / 256 | |
 | `UPSTREAM_CONNECT_TIMEOUT_S` / `UPSTREAM_READ_TIMEOUT_S` | 10 / 600 | |
 | `USAGE_LOG_RETENTION_DAYS` | 90 | |
 | `OPS_REPORT_ENABLED` | false | 运营日报开关 |
 | `REDIS_SENTINEL_NODES/MASTER/PASSWORD` | 空（直连） | 高可用可选 |
+| `REDIS_CONNECT_TIMEOUT_S` / `REDIS_SOCKET_TIMEOUT_S` / `RATE_LIMIT_ADMISSION_TIMEOUT_S` | 2 / 2 / 3 | Redis 连接、命令与整段准入秒数上限 |
 
 ---
 
@@ -609,18 +614,19 @@ SKIP_IMAGE_LOAD=1 bash deploy-offline.sh
 ```
 
 镜像 tar 带 gzip 与 `image-manifest.txt` 架构校验；PostgreSQL 使用 Compose 项目隔离的数据卷（同机多套部署须使用不同 `COMPOSE_PROJECT_NAME`）。
+当前签名 GitHub/GHCR 正式发行物以 `linux/amd64` 为目标；`TARGET_PLATFORM=linux/arm64` 是已验证的本地源码/离线构建路径，不表示已发布签名 arm64 正式发行物。
 运行期备份为经 `pg_restore --list` 校验的 PostgreSQL custom-format `.dump` 快照；格式压缩不等于加密，部署方仍须使用加密存储、访问控制与离机副本保护。开源发行包不含数据库 seed/dump；可选演示汇总数据由 `demo_seed.py` 在全新空库中生成。
 离线包含 `package-info.txt`（构建版本）与 `.env`（禁止 pull）。
 
 ### 13.4 Redis 高可用
 
-配置 `REDIS_SENTINEL_NODES=host:port,host:port,...` 后经 Sentinel 发现 master，故障切换自动跟随。恢复时间取决于部署方的 Sentinel 参数，应在目标环境通过故障演练验收；切换窗口内命令按 fail-open 吸收。
+配置 `REDIS_SENTINEL_NODES=host:port,host:port,...` 后经 Sentinel 发现 master，故障切换自动跟随。标准 Sentinel Compose overlay 会把节点、master、密码与 DB 参数实际注入 backend。恢复时间取决于部署方的 Sentinel 参数，应在目标环境通过故障演练验收；切换窗口内中继准入在总超时后返回可重试的 `503`。
 
 ### 13.5 观测点
 
 - `GET /health`：db/redis 连通性 + 用量丢弃计数；
 - 响应头：`X-Resolved-Model` / `Retry-After` / `X-Request-Id`；
-- 后端日志：限流 fail-open 告警、上游非 JSON 告警等结构化 warning。
+- 后端日志：Redis/依赖故障、上游非 JSON 告警等结构化 warning。
 
 ---
 
@@ -630,15 +636,15 @@ SKIP_IMAGE_LOAD=1 bash deploy-offline.sh
 |---|---|
 | API Key 存储 | 仅存 SHA-256 哈希 + 前缀；审批密钥明文只在申请用户首次领取时一次性返回 |
 | 浏览器会话 | 用户 8h、管理员 4h；HttpOnly/SameSite Cookie，不把 JWT 持久化到 Web Storage；Bearer 保持 API 兼容 |
-| 管理面鉴权 | 管理员首次访问设密、PBKDF2-SHA256 600,000 轮哈希；可选 bootstrap token；登录失败按来源与账号限流，高风险动作要求最近 10 分钟内验证 |
+| 管理面鉴权 | 管理员首次访问设密、PBKDF2-SHA256 600,000 轮哈希；生产强制高熵 bootstrap token；登录失败按来源与账号限流；后台改密需当前密码且会撤销全部旧管理员 JWT；高风险动作要求最近 10 分钟内验证 |
 | 用户会话撤销 | `token_version` + `is_active` 每次请求服务端校验；改密、管理员重置、注销立即使旧 JWT 失效 |
 | 越权防护 | 密钥列表/统计/日志/论坛身份取自已完成服务端校验的 claims，禁止凭账号 ID 查询他人数据 |
 | 网络面 | PG/Redis 仅绑 127.0.0.1，容器间走 compose 内网；Redis requirepass |
-| 速率控制 | 单 Key RPM/TPM 限流（数值预设可在后台按 Key 配置）；夜间 19:00–07:30 不限流窗口 |
+| 速率控制 | 单 Key RPM/TPM 限流（数值预设可在后台按 Key 配置）；夜间与模型类别绕过默认关闭；Redis 故障时准入 fail-closed |
 | 审计 | 管理操作全量落 `audit_logs` |
-| CORS / CSRF | 跨域通配仅服务显式 Authorization/x-api-key 客户端且不允许 credentials；平台会话 Cookie 保持 same-origin + SameSite |
+| CORS / CSRF | 跨域通配仅覆盖 `/v1/*`、`/beta/v1/*` 的显式 Authorization/x-api-key 客户端且不允许 credentials；`/api/*` 会话与首次认领保持 same-origin + SameSite |
 
-**已知取舍**：管理后台当前仍是单一共享管理员身份；JWT 密钥必须由部署方注入并由所有 worker 共享。管理员密码不进入源码、镜像或环境变量。
+**已知取舍**：管理后台当前仍是单一共享管理员身份，虽然改密会撤销旧会话，但审计无法区分共享密码背后的自然人；JWT 密钥必须由部署方注入并由所有 worker 共享。管理员密码不进入源码、镜像或环境变量。
 
 ---
 
@@ -650,9 +656,9 @@ SKIP_IMAGE_LOAD=1 bash deploy-offline.sh
 
 | 文件 | 覆盖 |
 |---|---|
-| `test_policy` | RPM/TPM 预扣/校正/返还/空桶放行/单 Key 覆盖/fail-open |
+| `test_policy` | RPM/TPM 预扣/原桶校正/原子返还/单请求超限/单 Key 覆盖/Redis error 与 hanging fail-closed |
 | `test_anthropic` | 双向转换：system 置顶合并、tool 顺序、多模态、工具映射 |
-| `test_token_estimate` | 全格式 prompt token 估算（tools/多模态/completions/Responses） |
+| `test_token_estimate` | 全格式 prompt + 输出别名/多候选 TPM 预扣估算 |
 | `test_usage_extract` | chat/Responses 双格式 usage 提取 |
 | `test_db_bridge_cache` | 鉴权缓存命中/失效/防打穿 |
 | `test_routing / test_auth_client / test_platform` 等 | 端点解析、鉴权、REST 面 |
@@ -680,7 +686,7 @@ python scripts/calibrate.py --base http://127.0.0.1:8021 --model <id> --key sk-p
 
 | 验收项 | 建议方法 | 通过标准 |
 |---|---|---|
-| Sentinel 切换 | 主动终止当前 master 并持续探测限流链路 | 在部署方定义的恢复目标内恢复，业务请求按 fail-open 策略处理 |
+| Sentinel 切换 | 主动终止当前 master 并持续探测限流链路 | 切换期间返回带 `Retry-After` 的 503，并在部署方定义的恢复目标内恢复 |
 | 流式断连计量 | 客户端收到首个分片后断开，随后查询用量日志 | 最终状态和已产生的用量能够落库 |
 | 鉴权缓存 | 对同一有效 Key 连续请求并观察数据库查询 | 缓存有效期内不重复读取 Key 注册信息 |
 | 节点容量 | 使用 `calibrate.py` 逐档加压 | 依据目标 TTFT、吞吐和错误率选择引擎准入参数 |
@@ -691,8 +697,8 @@ python scripts/calibrate.py --base http://127.0.0.1:8021 --model <id> --key sk-p
 
 与现有 LLM 网关/代理相比，平台的差异点在于：
 
-- **fail-open 优先**：多数网关（如 Kong、LiteLLM）在 Redis 异常时倾向于拒绝或降级为本地限流；本平台明确将协调层异常视为放行条件，优先保证业务连续性；
-- **超大请求空桶放行**：TPM 限流采用“先预扣再判定”，但空桶时无条件放行，避免超大 prompt 被永久拒绝；
+- **可验证的安全准入**：Redis 无法确认跨副本计数时明确返回可重试 503，不把协调故障静默转换成无限流量；
+- **完整预算准入**：TPM 预扣覆盖 prompt、最大输出、参数别名和多候选；单请求超过限额时空桶也拒绝，避免事后校正前的成本突发；
 - **取消安全执行器**：针对 asyncio level-cancellation 导致 finally 清理丢失的问题，提出 `guarded()` 模式，可作为同类型流式网关的通用修复；
 - **安全配置边界**：离线构建自动生成独立随机凭据，在线部署从 `.env.example` 创建本地配置。
 

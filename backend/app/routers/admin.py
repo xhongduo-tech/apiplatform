@@ -34,6 +34,7 @@ from app.admin_credentials import (
     AdminSetupRequired,
     admin_password_is_initialized,
     authenticate_or_initialize_admin,
+    change_admin_password,
 )
 from app.database import get_db
 from app.early_access import (
@@ -108,7 +109,10 @@ def _updated_custom_headers(raw, existing: dict | None, *, where: str) -> dict |
         return None
     if not isinstance(raw, dict):
         raise HTTPException(status_code=400, detail=f"{where} 必须是 JSON 对象")
-    return merge_masked_sensitive_headers(raw, existing) or None
+    try:
+        return merge_masked_sensitive_headers(raw, existing, where=where) or None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _model_admin_dict(r: ModelRegistryORM) -> dict:
@@ -350,12 +354,68 @@ async def admin_login(
         await asyncio.wait_for(redis.delete(fail_key), timeout=1.0)
     except Exception:
         pass
-    token = issue_token("admin", "admin")
+    token = issue_token("admin", "admin", {"ver": auth_result.token_version})
     set_admin_session_cookie(response, token)
     return {
         "token": token,
         "initializedNow": auth_result.initialized_now,
     }
+
+
+class AdminPasswordChangeIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=ADMIN_PASSWORD_MAX_LENGTH)
+    new_password: str = Field(
+        min_length=ADMIN_PASSWORD_MIN_LENGTH,
+        max_length=ADMIN_PASSWORD_MAX_LENGTH,
+    )
+    new_password_confirmation: str = Field(
+        min_length=ADMIN_PASSWORD_MIN_LENGTH,
+        max_length=ADMIN_PASSWORD_MAX_LENGTH,
+    )
+
+
+@router.post("/change-password")
+async def admin_change_password(
+    payload: AdminPasswordChangeIn,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
+    """Rotate the administrator password and revoke every older admin JWT."""
+    response.headers["Cache-Control"] = "no-store"
+    await enforce_auth_rate(
+        request,
+        action="admin-change-password",
+        account="admin",
+        client_limit=10,
+        account_limit=10,
+        window_s=900,
+    )
+    try:
+        result = await asyncio.to_thread(
+            change_admin_password,
+            db,
+            payload.current_password,
+            payload.new_password,
+            payload.new_password_confirmation,
+        )
+    except (AdminSetupRequired, AdminPasswordPolicyError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not result.authenticated:
+        db.rollback()
+        # 当前会话本身仍然有效；这里是改密表单校验失败，不应让前端把它解释为
+        # JWT 过期并清除会话。尝试频率仍由上面的独立认证限流约束。
+        raise HTTPException(status_code=400, detail="当前管理员密码错误")
+
+    _audit(db, "admin", "admin.password_changed", "admin", {
+        "token_version": result.token_version,
+    })
+    db.commit()
+    token = issue_token("admin", "admin", {"ver": result.token_version})
+    set_admin_session_cookie(response, token)
+    return {"token": token, "sessionsRevoked": True}
 
 
 @router.get("/session")

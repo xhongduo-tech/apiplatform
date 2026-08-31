@@ -1,4 +1,4 @@
-"""RPM/TPM 限流单测：预扣 + 事后校正 + 空桶放行超大请求 + fail-open。"""
+"""RPM/TPM 限流单测：预扣、校正、显式豁免与 Redis fail-closed。"""
 from types import SimpleNamespace
 
 import fakeredis.aioredis
@@ -23,6 +23,7 @@ def fake_env(monkeypatch):
     monkeypatch.setattr(settings, "RATE_LIMIT_TPM", 10_000)
     # 固定为「白天」：限流测试不受夜间不限流窗口影响（否则夜里跑 CI 会假失败）
     monkeypatch.setattr(settings, "NIGHT_UNLIMITED_ENABLED", False)
+    monkeypatch.setattr(settings, "RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED", False)
     return fake
 
 
@@ -44,13 +45,14 @@ async def test_tpm_reserve_blocks_concurrent_overshoot(fake_env):
 
 
 @pytest.mark.asyncio
-async def test_tpm_empty_bucket_allows_oversized_request(fake_env):
-    # 桶为空时，即使单请求估算超过分钟上限也放行（任何输入都有输出）
-    reserved = await policy.enforce_pre(_key(), None, None, est_tokens=50_000)
-    assert reserved == 50_000
-    # 但后续请求被挡
-    with pytest.raises(HTTPException):
-        await policy.enforce_pre(_key(), None, None, est_tokens=100)
+async def test_tpm_empty_bucket_rejects_oversized_request(fake_env):
+    # 单请求预算本身超过 TPM 时直接拒绝；空桶不再是超额放行后门。
+    with pytest.raises(HTTPException) as exc:
+        await policy.enforce_pre(_key(), None, None, est_tokens=50_000)
+    assert exc.value.status_code == 429
+    assert "单请求 token 预算" in exc.value.detail
+    assert await fake_env.get(f"rl:tpm:k1:{_BUCKET}") is None
+    assert await fake_env.get(f"rl:rpm:k1:{_BUCKET}") is None
 
 
 @pytest.mark.asyncio
@@ -123,7 +125,7 @@ async def test_per_key_limit_overrides_platform_default(fake_env, monkeypatch):
     k2 = _key()
     k2.id = "k2"
     k2.tpm_limit = 500
-    await policy.enforce_pre(k2, None, None, est_tokens=400)  # 空桶放行
+    await policy.enforce_pre(k2, None, None, est_tokens=400)  # 空桶内的合法预算正常预扣
     with pytest.raises(HTTPException):
         await policy.enforce_pre(k2, None, None, est_tokens=400)
 
@@ -152,9 +154,72 @@ async def test_refund_tokens_returns_reservation(fake_env):
 
 @pytest.mark.asyncio
 async def test_refund_tokens_clamps_when_bucket_rotated(fake_env):
-    # 预扣桶已随分钟轮转过期：返还不得把新桶扣成负数（钳到 0）
+    # 兼容旧 int 凭据时，缺失桶也不得被创建成负数。
     await policy.refund_tokens("k1", 9_999)
     assert int(await fake_env.get(f"rl:tpm:k1:{_BUCKET}") or 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_record_tokens_corrects_original_bucket_across_minute(
+    fake_env, monkeypatch,
+):
+    clock = {"now": _FIXED_NOW}
+    monkeypatch.setattr(policy, "time", SimpleNamespace(time=lambda: clock["now"]))
+    reserved = await policy.enforce_pre(_key(), None, None, est_tokens=6_000)
+    assert isinstance(reserved, policy.TokenReservation)
+    assert reserved.bucket == _BUCKET
+
+    clock["now"] += 60
+    next_bucket = _BUCKET + 1
+    await fake_env.set(f"rl:tpm:k1:{next_bucket}", 777, ex=70)
+    await policy.record_tokens("k1", 8_000, reserved)
+
+    assert int(await fake_env.get(f"rl:tpm:k1:{_BUCKET}")) == 8_000
+    assert int(await fake_env.get(f"rl:tpm:k1:{next_bucket}")) == 777
+
+
+@pytest.mark.asyncio
+async def test_refund_only_original_bucket_across_minute(fake_env, monkeypatch):
+    clock = {"now": _FIXED_NOW}
+    monkeypatch.setattr(policy, "time", SimpleNamespace(time=lambda: clock["now"]))
+    reserved = await policy.enforce_pre(_key(), None, None, est_tokens=5_000)
+
+    clock["now"] += 60
+    next_bucket = _BUCKET + 1
+    await fake_env.set(f"rl:tpm:k1:{next_bucket}", 2_000, ex=70)
+    await policy.refund_tokens("k1", reserved)
+
+    assert int(await fake_env.get(f"rl:tpm:k1:{_BUCKET}")) == 0
+    assert int(await fake_env.get(f"rl:tpm:k1:{next_bucket}")) == 2_000
+
+
+@pytest.mark.asyncio
+async def test_refund_missing_original_bucket_never_touches_new_bucket(
+    fake_env, monkeypatch,
+):
+    clock = {"now": _FIXED_NOW}
+    monkeypatch.setattr(policy, "time", SimpleNamespace(time=lambda: clock["now"]))
+    reservation = policy.TokenReservation(5_000, _BUCKET)
+    clock["now"] += 60
+    await fake_env.set(f"rl:tpm:k1:{_BUCKET + 1}", 3_000, ex=70)
+
+    await policy.refund_tokens("k1", reservation)
+
+    assert await fake_env.get(f"rl:tpm:k1:{_BUCKET}") is None
+    assert int(await fake_env.get(f"rl:tpm:k1:{_BUCKET + 1}")) == 3_000
+
+
+@pytest.mark.asyncio
+async def test_concurrent_refunds_atomically_clamp_at_zero(fake_env):
+    await fake_env.set(f"rl:tpm:k1:{_BUCKET}", 100, ex=70)
+    reservation = policy.TokenReservation(100, _BUCKET)
+    import asyncio
+
+    await asyncio.gather(
+        policy.refund_tokens("k1", reservation),
+        policy.refund_tokens("k1", reservation),
+    )
+    assert int(await fake_env.get(f"rl:tpm:k1:{_BUCKET}")) == 0
 
 
 # ── 夜间不限流窗口 ────────────────────────────────────────────────────────────
@@ -191,8 +256,9 @@ def _model(category: str) -> ModelRegistryORM:
 
 
 @pytest.mark.asyncio
-async def test_embedding_model_exempt_from_rpm_tpm(fake_env, monkeypatch):
+async def test_embedding_model_exemption_requires_explicit_opt_in(fake_env, monkeypatch):
     monkeypatch.setattr(settings, "RATE_LIMIT_RPM", 1)
+    monkeypatch.setattr(settings, "RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED", True)
     for _ in range(5):
         got = await policy.enforce_pre(
             _key(), None, None, est_tokens=1_000_000, model=_model("embedding"),
@@ -201,8 +267,9 @@ async def test_embedding_model_exempt_from_rpm_tpm(fake_env, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reranker_model_exempt_from_rpm_tpm(fake_env, monkeypatch):
+async def test_reranker_model_exemption_requires_explicit_opt_in(fake_env, monkeypatch):
     monkeypatch.setattr(settings, "RATE_LIMIT_RPM", 1)
+    monkeypatch.setattr(settings, "RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED", True)
     for _ in range(5):
         got = await policy.enforce_pre(
             _key(), None, None, est_tokens=1_000_000, model=_model("reranker"),
@@ -217,6 +284,16 @@ async def test_chat_model_still_rate_limited(fake_env, monkeypatch):
     await policy.enforce_pre(_key(), None, None, model=_model("chat"))
     with pytest.raises(HTTPException):
         await policy.enforce_pre(_key(), None, None, model=_model("chat"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("category", ["embedding", "reranker"])
+async def test_model_exemptions_are_disabled_by_default(fake_env, monkeypatch, category):
+    monkeypatch.setattr(settings, "RATE_LIMIT_RPM", 1)
+    await policy.enforce_pre(_key(), None, None, model=_model(category))
+    with pytest.raises(HTTPException) as exc:
+        await policy.enforce_pre(_key(), None, None, model=_model(category))
+    assert exc.value.status_code == 429
 
 
 @pytest.mark.asyncio
@@ -281,7 +358,7 @@ def test_retry_reserved_preserves_night_marker():
 
 
 @pytest.mark.asyncio
-async def test_fail_open_on_redis_error(fake_env, monkeypatch):
+async def test_admission_fails_closed_on_redis_error(fake_env, monkeypatch):
     class Boom:
         def pipeline(self):
             raise ConnectionError("redis down")
@@ -290,6 +367,80 @@ async def test_fail_open_on_redis_error(fake_env, monkeypatch):
             raise ConnectionError("redis down")
 
     monkeypatch.setattr(policy, "redis", Boom())
-    reserved = await policy.enforce_pre(_key(), None, None, est_tokens=6_000)
-    assert reserved == 0  # 放行且无预扣
-    await policy.record_tokens("k1", 8_000, reserved=0)  # 不抛异常
+    with pytest.raises(HTTPException) as exc:
+        await policy.enforce_pre(_key(), None, None, est_tokens=6_000)
+    assert exc.value.status_code == 503
+    assert exc.value.headers == {"Retry-After": "5"}
+    # 响应后的校正仍是 best-effort；它不能把已产生的正常响应改成失败。
+    await policy.record_tokens("k1", 8_000, reserved=0)
+
+
+@pytest.mark.asyncio
+async def test_tpm_failure_rolls_back_confirmed_rpm_increment(fake_env, monkeypatch):
+    class FailingSecondPipeline:
+        def __init__(self, owner, inner):
+            self.owner = owner
+            self.inner = inner
+
+        def __getattr__(self, name):
+            attr = getattr(self.inner, name)
+            if not callable(attr):
+                return attr
+
+            def call(*args, **kwargs):
+                attr(*args, **kwargs)
+                return self
+
+            return call
+
+        async def execute(self):
+            self.owner.executions += 1
+            if self.owner.executions == 2:
+                raise ConnectionError("TPM pipeline failed")
+            return await self.inner.execute()
+
+    class FailingTpmRedis:
+        def __init__(self, inner):
+            self.inner = inner
+            self.executions = 0
+
+        def pipeline(self):
+            return FailingSecondPipeline(self, self.inner.pipeline())
+
+        async def eval(self, *args):
+            return await self.inner.eval(*args)
+
+    monkeypatch.setattr(policy, "redis", FailingTpmRedis(fake_env))
+    with pytest.raises(HTTPException) as exc:
+        await policy.enforce_pre(_key(), None, None, est_tokens=100)
+    assert exc.value.status_code == 503
+    assert int(await fake_env.get(f"rl:rpm:k1:{_BUCKET}")) == 0
+
+
+@pytest.mark.asyncio
+async def test_admission_hanging_redis_has_total_timeout(fake_env, monkeypatch):
+    import asyncio
+
+    class HangingPipeline:
+        def incr(self, *_args):
+            return self
+
+        def expire(self, *_args):
+            return self
+
+        async def execute(self):
+            await asyncio.Event().wait()
+
+    class HangingRedis:
+        def pipeline(self):
+            return HangingPipeline()
+
+    monkeypatch.setattr(policy, "redis", HangingRedis())
+    monkeypatch.setattr(settings, "RATE_LIMIT_ADMISSION_TIMEOUT_S", 0.01)
+    with pytest.raises(HTTPException) as exc:
+        await asyncio.wait_for(
+            policy.enforce_pre(_key(), None, None, est_tokens=100),
+            timeout=0.5,
+        )
+    assert exc.value.status_code == 503
+    assert exc.value.headers == {"Retry-After": "5"}

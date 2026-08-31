@@ -156,8 +156,12 @@ schema 生成 .env.example 和文档表格，避免文档漂移。
 
 当前 Dockerfile 基础镜像以及 Compose 中 PostgreSQL、Redis、Prometheus、Grafana
 默认镜像均已固定 digest；发布 workflow 会为项目自建的后端与 Nginx 镜像生成
-SPDX SBOM、签名和 provenance。后续应把上游运行时镜像纳入定期 SBOM/漏洞差异
-报告，并在上游发布修复镜像后由 Dependabot 或维护者更新 digest。上游镜像中仅在
+SPDX SBOM、Cosign 签名和 GitHub/Sigstore SLSA build provenance，并在签名前按
+仓库、workflow、tag、完整 commit、GitHub-hosted runner 与精确镜像 RepoDigest
+重新验证 provenance。离线构建还会复用 Compose 的四个上游 digest，绑定完整
+commit 与本地 image ID，并明确标记为 `UNSIGNED_USER_BUILD`；它不能代替发布工作流
+签署的官方离线发行物。后续应把上游运行时镜像纳入定期 SBOM/漏洞差异报告，并在
+上游发布修复镜像后由 Dependabot 或维护者更新 digest。上游镜像中仅在
 启动或监控组件使用的 Go 二进制仍可能被扫描器报告新披露问题；部署继续保持回环
 监听、最小权限，并以官方重建版本为升级边界。
 

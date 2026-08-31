@@ -7,7 +7,8 @@ from datetime import date as _date, datetime, timezone
 
 from pydantic import BaseModel, Field
 from sqlalchemy import (
-    BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, func,
+    BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, JSON,
+    String, Text, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -68,6 +69,17 @@ class ApiKeyORM(Base):
     rpm_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tpm_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
+    __table_args__ = (
+        CheckConstraint(
+            "rpm_limit IS NULL OR rpm_limit <> 0",
+            name="ck_api_keys_rpm_limit_nonzero",
+        ),
+        CheckConstraint(
+            "tpm_limit IS NULL OR tpm_limit <> 0",
+            name="ck_api_keys_tpm_limit_nonzero",
+        ),
+    )
+
 
 # ── 场景分类（业务场景，admin 可增删改；api_keys.scene_type 引用 key）──────────
 class SceneTypeORM(Base):
@@ -97,6 +109,10 @@ class ApplicationORM(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reviewer: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_applications_created_at", "created_at"),
+    )
 
 
 # ── 模型注册表 ───────────────────────────────────────────────────────────────
@@ -292,6 +308,10 @@ class UserORM(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    __table_args__ = (
+        Index("ix_users_created_at", "created_at"),
+    )
+
 
 # ── 抢先体验计划 ──────────────────────────────────────────────────────────────
 class EarlyAccessApplicationORM(Base):
@@ -318,6 +338,10 @@ class EarlyAccessApplicationORM(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reviewer: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_early_access_status", "status"),
+    )
 
 
 # ── 高并发升级申请 ─────────────────────────────────────────────────────────────
@@ -428,6 +452,10 @@ class AuditLogORM(Base):
     target: Mapped[str | None] = mapped_column(String, nullable=True)
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_audit_logs_created_at", "created_at"),
+    )
 
 
 # ── 算力拓扑资源登记 ──────────────────────────────────────────────────────────

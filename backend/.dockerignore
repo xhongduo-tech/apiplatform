@@ -13,6 +13,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+*.local
+**/*.local
 *.pem
 *.key
 *.p12
