@@ -39,8 +39,8 @@ Each Enterprise release must declare an exact tested core range and extension
 API version. The initial implemented release mapping is:
 
 ```text
-Community core:  1.0.0
-Enterprise:      1.0.0-ee.1
+Community core:  1.0.1
+Enterprise:      1.0.1-ee.1
 Compatible core: >=1.0.0,<1.1.0
 Extension API:   1
 ```

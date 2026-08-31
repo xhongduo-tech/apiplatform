@@ -1,7 +1,51 @@
 """A社 ⇄ OpenAI 转换单测（纯函数，无网络）。"""
 import json
 
-from app.proxy.anthropic import anthropic_to_openai, openai_to_anthropic
+import pytest
+from fastapi import HTTPException
+
+from app.proxy.anthropic import _count_from_raw, anthropic_to_openai, openai_to_anthropic
+
+
+def test_count_tokens_raw_parser_requires_a_json_object():
+    assert _count_from_raw(b'{"messages": [{"role": "user", "content": "hello"}]}') > 0
+
+    for raw in (b"[]", b"null", b'"text"'):
+        with pytest.raises(HTTPException) as exc_info:
+            _count_from_raw(raw)
+        assert exc_info.value.status_code == 422
+
+
+def test_count_tokens_raw_parser_rejects_malformed_and_excessive_nesting():
+    with pytest.raises(HTTPException) as exc_info:
+        _count_from_raw(b"{")
+    assert exc_info.value.status_code == 400
+
+    deeply_nested = (
+        b'{"input":' + (b"[" * 5_000) + b'"deep"' + (b"]" * 5_000) + b"}"
+    )
+    try:
+        # Some Python JSON decoders accept this depth; the estimator is
+        # deliberately iterative and remains safe in that case.
+        assert _count_from_raw(deeply_nested) > 0
+    except HTTPException as exc:
+        # Other supported decoders enforce their recursion bound. That is a
+        # stable client error, never an uncaught 500.
+        assert exc.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        b'{"messages": [], "value": NaN}',
+        b'{"messages": [], "value": 1e9999}',
+        b'{"messages": [], "value": "\\ud800"}',
+    ),
+)
+def test_count_tokens_rejects_non_interoperable_json_values(raw: bytes) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        _count_from_raw(raw)
+    assert exc_info.value.status_code == 400
 
 
 def test_system_and_text():

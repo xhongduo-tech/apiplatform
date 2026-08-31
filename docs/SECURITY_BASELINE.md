@@ -1,0 +1,83 @@
+# Product security baseline
+
+This document defines the minimum security controls for Community development,
+release, and operation. It is a control baseline and evidence index, not a
+claim of certification or complete compliance with any external standard.
+
+## Reference standards
+
+- [NIST SSDF 1.1](https://csrc.nist.gov/pubs/sp/800/218/final) organizes the
+  lifecycle around preparing the organization, protecting software, producing
+  well-secured software, and responding to vulnerabilities.
+- [OWASP ASVS 5.0.0](https://owasp.org/www-project-application-security-verification-standard/)
+  is the application-control catalogue. This project uses Level 2 as its
+  verification target because it processes credentials and administrative data.
+- [SLSA 1.2](https://slsa.dev/spec/v1.2/) guides source and build integrity.
+  A SLSA level is claimed only for a particular artifact after its provenance
+  has been independently verified.
+- [OpenSSF Scorecard](https://openssf.org/scorecard/) supplies a continuously
+  updated repository-health signal. A score is not a substitute for review.
+
+The chapter-level ASVS coverage record is maintained in
+[ASVS 5.0 Level 2 tracking](ASVS-5.0-L2.md); attack assumptions and trust
+boundaries are maintained in [the threat model](THREAT_MODEL.md).
+
+## Required controls and evidence
+
+| Control | Automated evidence | Human evidence |
+| --- | --- | --- |
+| Security requirements and design review | Versioned baseline and threat-model presence is checked by `scripts/check-public-release.sh` | Pull request security/compatibility checklist |
+| Protected source | Required CI, signed commits/tags, immutable release/tag rules, pinned Actions | Maintainer and release-owner review |
+| Secret prevention | Full-history Gitleaks scan, GitHub push protection, release hygiene scan | Incident rotation record if a secret is exposed |
+| Application security | CodeQL for Python and JavaScript/TypeScript, a release gate for open High/Critical CodeQL alerts, Bandit, Ruff, unit/integration/E2E tests; first-admin claim and admin password-rotation/session-revocation tests | Review of authorization, cryptography, migrations, and trust-boundary changes |
+| Dependency security | `pip-audit`, `npm audit`, Dependabot, pinned container and Action references | Time-bounded exception with owner and compensating control |
+| Container security | Trivy gate and SPDX SBOM for project images | Review of unresolved upstream findings and deployment exposure |
+| Release integrity | Signed annotated tag, Cosign-signed checksum manifest, immutable GitHub Release, digest-addressed images, image signatures, SBOM attestations and build provenance | Independent verification of release identity, the checksum Sigstore bundle and evidence; confirmation that the release workflow is the sole GHCR package writer during non-atomic tag promotion |
+| Secure operation | Production preflight, non-root/read-only containers, loopback defaults, TLS guidance, backup checks | Secret inventory, least-privilege review, restore drill and key-version record |
+| Vulnerability response | Private Vulnerability Reporting and supported-version policy | Triage, coordinated disclosure, advisory, remediation and retrospective |
+
+No release may call a control “implemented” unless the linked automated check
+passes or the release evidence contains a named, expiring exception. An
+exception records the affected component/CVE, exploitability, owner, approval,
+compensating controls, target remediation release, and expiry date. “No vendor
+fix” by itself is not an exception. Every exception must use the
+[security exception template](SECURITY_EXCEPTION_TEMPLATE.md), be approved by
+the required independent reviewer, and remain unexpired on the release date;
+an expired or incompletely approved record cannot satisfy a gate.
+
+## Security gates
+
+Every pull request to `main` must pass the release hygiene, dependency,
+backend, frontend, browser E2E, container, and CodeQL checks relevant to the
+change. The scheduled Scorecard run detects repository-control regressions.
+Release tags additionally require the immutable release workflow and artifact
+verification described in [the release checklist](RELEASE_CHECKLIST.md).
+
+The following conditions block a release:
+
+- an exploitable Critical or High application finding without an approved,
+  unexpired exception;
+- an unreviewed authentication, authorization, cryptography, bootstrap, data
+  migration, backup, or release-pipeline change;
+- a missing or invalid signature, provenance statement, SBOM, checksum, or
+  image digest;
+- a known secret or private data item in the tree, history, image, artifact, or
+  diagnostic bundle;
+- a failed clean-database migration, production preflight, release-critical
+  browser flow, or isolated restore drill;
+- an open High or Critical CodeQL alert on the release branch.
+- an unreviewed GHCR package writer or concurrent package-write activity during
+  the canonical tag promotion window.
+
+## Change and review rules
+
+Update the threat model in the same pull request when a new public endpoint,
+identity provider, extension capability, secret, data store, trust boundary,
+deployment mode, or privileged job is introduced. Update the ASVS tracker when
+a control or verification method changes. Review this baseline before every
+minor release and after every confirmed security incident.
+
+Commercial contracts may promise narrower response times or longer support
+windows, but they cannot weaken these technical release gates. Proprietary
+licensing controls entitlement authenticity; they do not replace application,
+supply-chain, operational, or incident-response security.

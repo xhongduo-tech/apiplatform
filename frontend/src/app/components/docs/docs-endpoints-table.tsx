@@ -118,6 +118,7 @@ export function DocsEndpointsTable() {
         id: "endpoints-admin",
         items: [
           { method: "POST", path: "/api/admin/login", key: "docsPage.reference.endpoints.adminLogin" },
+          { method: "POST", path: "/api/admin/change-password", key: "docsPage.reference.endpoints.adminChangePassword" },
           { method: "GET", path: "/api/admin/models", key: "docsPage.reference.endpoints.adminModels", locked: true },
           { method: "PUT", path: "/api/admin/models/{model_id}", key: "docsPage.reference.endpoints.adminModels", locked: true },
           { method: "PATCH", path: "/api/admin/models/{model_id}", key: "docsPage.reference.endpoints.adminModels", locked: true },

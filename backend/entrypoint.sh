@@ -58,4 +58,5 @@ exec gunicorn app.main:app \
   -c /app/gunicorn_conf.py \
   --timeout 600 \
   --graceful-timeout 30 \
-  --keep-alive 75
+  --keep-alive 75 \
+  --no-control-socket

@@ -179,8 +179,8 @@ def build_scenes_dist(db: Session, *, days: int, key_ids: list[str] | None = Non
     ]
 
 
-def build_context_length(db: Session, *, key_ids: list[str], days: int) -> dict:
-    if not key_ids:
+def build_context_length(db: Session, *, key_ids: list[str] | None, days: int) -> dict:
+    if key_ids is not None and not key_ids:
         return {
             "buckets": empty_context_buckets(), "total": 0, "avg": 0,
             "p50": 0, "p90": 0, "p99": 0, "max": 0, "min": 0, "days": days,
@@ -191,16 +191,14 @@ def build_context_length(db: Session, *, key_ids: list[str], days: int) -> dict:
     boundaries = [b for _, b in _CONTEXT_BUCKETS if b is not None]
 
     bkt_map: dict[int, int] = {}
+    bucket_query = select(
+        UsageContextBucketDailyORM.bucket,
+        func.coalesce(func.sum(UsageContextBucketDailyORM.count), 0).label("cnt"),
+    ).where(UsageContextBucketDailyORM.day >= since_day)
+    if key_ids is not None:
+        bucket_query = bucket_query.where(UsageContextBucketDailyORM.api_key_id.in_(key_ids))
     bucket_rows = db.execute(
-        select(
-            UsageContextBucketDailyORM.bucket,
-            func.coalesce(func.sum(UsageContextBucketDailyORM.count), 0).label("cnt"),
-        )
-        .where(
-            UsageContextBucketDailyORM.api_key_id.in_(key_ids),
-            UsageContextBucketDailyORM.day >= since_day,
-        )
-        .group_by(UsageContextBucketDailyORM.bucket)
+        bucket_query.group_by(UsageContextBucketDailyORM.bucket)
     ).all()
     for r in bucket_rows:
         bkt_map[int(r.bucket)] = int(r.cnt)
@@ -208,7 +206,9 @@ def build_context_length(db: Session, *, key_ids: list[str], days: int) -> dict:
 
     stats_row = None
     for src in (UsageRequestProfileORM, UsageLogORM):
-        conds = [src.api_key_id.in_(key_ids), src.created_at >= since_utc, src.prompt_tokens > 0]
+        conds = [src.created_at >= since_utc, src.prompt_tokens > 0]
+        if key_ids is not None:
+            conds.insert(0, src.api_key_id.in_(key_ids))
         row = db.execute(
             select(
                 func.count().label("total"),
@@ -268,8 +268,8 @@ def build_context_length(db: Session, *, key_ids: list[str], days: int) -> dict:
     }
 
 
-def build_tool_calls(db: Session, *, key_ids: list[str], days: int) -> dict:
-    if not key_ids:
+def build_tool_calls(db: Session, *, key_ids: list[str] | None, days: int) -> dict:
+    if key_ids is not None and not key_ids:
         return {
             "buckets": [{"label": label, "count": 0, "share": 0.0} for label, _, _ in TOOL_CALL_BUCKETS],
             "total_sessions": 0,

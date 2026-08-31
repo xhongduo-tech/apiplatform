@@ -4,7 +4,9 @@
 # PostgreSQL custom-format 快照到 Compose 项目隔离的 pgbackups 卷。
 #
 # 从源码构建并启动：docker compose up -d --build（使用 docker-compose.yml）
-# 使用预构建镜像启动：docker compose -f docker-compose.app.yml up -d
+# 官方预构建部署必须在 .env 中把 BACKEND_IMAGE/NGINX_IMAGE 设为已验证的
+# GHCR @sha256 RepoDigest；默认的本地版本 tag 仅供源码构建与离线编排。
+# 启动：docker compose -f docker-compose.app.yml up -d
 # backend entrypoint 会自动迁移空库并按 DEMO_DATA_ENABLED 决定是否写入虚构数据。
 #
 # 离线包：由 build-offline.sh 自动打包，内网直接运行。
@@ -95,7 +97,7 @@ services:
       retries: 5
 
   backend:
-    image: ${BACKEND_IMAGE:-apiplatform-backend:latest}
+    image: ${BACKEND_IMAGE:-apiplatform-backend:1.0.1}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging
@@ -110,6 +112,10 @@ services:
       DATABASE_URL: postgresql+psycopg://platform:${POSTGRES_PASSWORD:?请在 .env 中设置随机 POSTGRES_PASSWORD}@postgres:5432/openapi_platform
       REDIS_URL: redis://:${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}@redis:6379/0
       REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_CONNECT_TIMEOUT_S: ${REDIS_CONNECT_TIMEOUT_S:-2}
+      REDIS_SOCKET_TIMEOUT_S: ${REDIS_SOCKET_TIMEOUT_S:-2}
+      RATE_LIMIT_ADMISSION_TIMEOUT_S: ${RATE_LIMIT_ADMISSION_TIMEOUT_S:-3}
       JWT_SECRET: ${JWT_SECRET:?请在 .env 中设置随机 JWT_SECRET}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?请在 .env 中设置独立的 32 字节 base64url DATA_ENCRYPTION_KEY}
       JWT_ISSUER: ${JWT_ISSUER:-open-api-platform}
@@ -119,7 +125,7 @@ services:
       USER_SESSION_COOKIE: ${USER_SESSION_COOKIE:-platform_session}
       ADMIN_SESSION_COOKIE: ${ADMIN_SESSION_COOKIE:-platform_admin_session}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?请在 .env 中设置由至少 32 个随机字节生成的 ADMIN_BOOTSTRAP_TOKEN}
       ADMIN_SENSITIVE_ACTION_MAX_AGE_S: ${ADMIN_SENSITIVE_ACTION_MAX_AGE_S:-600}
       ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD: ${ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD:-false}
       BACKUP_INTERVAL_S: ${BACKUP_INTERVAL_S:-3600}
@@ -130,6 +136,15 @@ services:
       # 开源发行版默认展示完全虚构的看板数据；任一用户/Key 已存在时自动跳过。
       DEMO_DATA_ENABLED: ${DEMO_DATA_ENABLED:-true}
       UPSTREAM_TLS_VERIFY: ${UPSTREAM_TLS_VERIFY:-true}
+      # 无限流量绕过默认关闭；仅在完成容量隔离与滥用风险评估后显式开启。
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-600}
+      RATE_LIMIT_TPM: ${RATE_LIMIT_TPM:-6000000}
+      RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS: ${RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS:-4096}
+      NIGHT_UNLIMITED_ENABLED: ${NIGHT_UNLIMITED_ENABLED:-false}
+      NIGHT_UNLIMITED_START: ${NIGHT_UNLIMITED_START:-19:00}
+      NIGHT_UNLIMITED_END: ${NIGHT_UNLIMITED_END:-07:30}
+      PLATFORM_TIMEZONE: ${PLATFORM_TIMEZONE:-Asia/Shanghai}
+      RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED: ${RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED:-false}
       USAGE_FAILOVER_DIR: /var/lib/apiplatform/usage
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
@@ -250,7 +265,7 @@ services:
       start_period: 30s
 
   nginx:
-    image: ${NGINX_IMAGE:-apiplatform-nginx:latest}
+    image: ${NGINX_IMAGE:-apiplatform-nginx:1.0.1}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging

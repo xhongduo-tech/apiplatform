@@ -263,8 +263,8 @@ class _Req:
     def __init__(self, body):
         self._body = body
 
-    async def json(self):
-        return self._body
+    async def body(self):
+        return json.dumps(self._body).encode("utf-8")
 
 
 async def _messages(monkeypatch, client, *, with_fallback=True, stream=False):

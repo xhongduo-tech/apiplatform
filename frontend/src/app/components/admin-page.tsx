@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, Suspense, useMemo, type ComponentType
 import {
   Loader2, Lock, LogOut, ExternalLink,
   TrendingUp, Database, Key, ArrowLeftRight,
-  ScrollText, Users, Sparkles, Tags, Zap, Server, ShieldAlert, Palette,
+  ScrollText, Users, Sparkles, Tags, Zap, Server, ShieldAlert, ShieldCheck, Palette,
 } from "lucide-react";
 import { EarlyAccessIcon } from "./early-access-icon";
 import { toast } from "sonner";
@@ -29,6 +29,7 @@ const importSceneTypesTab = () => import("./admin-scene-types-tab");
 const importUpgradeAppsTab = () => import("./admin-upgrade-apps-tab");
 const importFallbackTab = () => import("./admin-fallback-tab");
 const importBrandingTab = () => import("./admin-branding-tab");
+const importSecurityTab = () => import("./admin-security-tab");
 
 const DashboardTab = lazyRetry(importDashboardTab);
 const KeysTab = lazyRetry(importKeysTab);
@@ -43,8 +44,9 @@ const SceneTypesTab = lazyRetry(importSceneTypesTab);
 const UpgradeAppsTab = lazyRetry(importUpgradeAppsTab);
 const FallbackTab = lazyRetry(importFallbackTab);
 const BrandingTab = lazyRetry(importBrandingTab);
+const SecurityTab = lazyRetry(importSecurityTab);
 
-type Tab = "dashboard" | "infra" | "keys" | "models" | "fallback" | "migration" | "logs" | "users" | "early-access" | "ask-docs" | "scene-types" | "upgrade-apps" | "branding";
+type Tab = "dashboard" | "infra" | "keys" | "models" | "fallback" | "migration" | "logs" | "users" | "early-access" | "ask-docs" | "scene-types" | "upgrade-apps" | "branding" | "security";
 
 interface TabDef {
   key: Tab;
@@ -79,6 +81,7 @@ function makeNavGroups(t: ReturnType<typeof useT>["t"]): { title: string; items:
     {
       title: t("admin.nav.system"),
       items: [
+        { key: "security", label: t("admin.nav.security"), icon: ShieldCheck, desc: t("admin.nav.security.desc") },
         { key: "branding", label: t("admin.nav.branding"), icon: Palette, desc: t("admin.nav.branding.desc") },
         { key: "scene-types", label: t("admin.nav.sceneTypes"), icon: Tags, desc: t("admin.nav.sceneTypes.desc") },
         { key: "ask-docs", label: t("admin.nav.askDocs"), icon: Sparkles, desc: t("admin.nav.askDocs.desc") },
@@ -240,7 +243,7 @@ export function AdminPage() {
       importKeysTab, importModelsTab, importLogsTab, importInfraTab,
       importUsersTab, importMigrationTab, importEarlyAccessTab,
       importAskDocsTab, importSceneTypesTab, importUpgradeAppsTab, importFallbackTab,
-      importBrandingTab,
+      importBrandingTab, importSecurityTab,
     ]);
   }, [token]);
 
@@ -438,6 +441,7 @@ export function AdminPage() {
           {activeTab === "upgrade-apps" && <UpgradeAppsTab token={token} />}
           {activeTab === "migration" && <MigrationTab token={token} />}
           {activeTab === "branding" && <BrandingTab token={token} />}
+          {activeTab === "security" && <SecurityTab token={token} />}
         </Suspense>
       </ConsoleLayout>
     </ModelProvider>

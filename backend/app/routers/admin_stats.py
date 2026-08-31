@@ -17,7 +17,6 @@ from app.models import ApiKeyORM, ApplicationORM, ModelRegistryORM, SceneTypeORM
 from app.infra_fleet import build_fleet
 from app.stats_breakdown import query_summary_breakdown
 from app.platform_usage_stats import (
-    all_key_ids,
     build_context_length,
     build_models_dist,
     build_projects_dist,
@@ -708,7 +707,7 @@ def admin_stats_tool_calls(
     db: Session = Depends(get_db),
     _=Depends(require_admin),
 ):
-    return build_tool_calls(db, key_ids=all_key_ids(db), days=days)
+    return build_tool_calls(db, key_ids=None, days=days)
 
 
 @router.get("/stats/context-length")
@@ -717,7 +716,7 @@ def admin_stats_context_length(
     db: Session = Depends(get_db),
     _=Depends(require_admin),
 ):
-    return build_context_length(db, key_ids=all_key_ids(db), days=days)
+    return build_context_length(db, key_ids=None, days=days)
 
 
 @router.get("/stats/heatmap/week")

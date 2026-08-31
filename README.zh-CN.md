@@ -9,6 +9,8 @@
 
 [![许可证：Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-2563EB?style=flat-square)](LICENSE)
 [![CI](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/xhongduo-tech/apiplatform/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/xhongduo-tech/apiplatform/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/xhongduo-tech/apiplatform/badge)](https://scorecard.dev/viewer/?uri=github.com/xhongduo-tech/apiplatform)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
@@ -201,7 +203,9 @@ healthy。后端启动时会自动串行执行 Alembic 迁移，不需要额外�
 | Grafana | <http://127.0.0.1:3000> |
 
 首次管理员初始化完成前请保持回环监听。随后再通过可信 TLS 反向代理、指定管理网
-地址或显式设置 `HTTP_BIND_ADDRESS` 对外提供服务。
+地址或显式设置 `HTTP_BIND_ADDRESS` 对外提供服务。扩大监听地址或使用域名前，
+必须先在可信代理终结 HTTPS，并同时设置 `SESSION_COOKIE_SECURE=true`；默认的
+`false` 仅用于回环 HTTP 首次认领，不能与外部可达的明文会话同时使用。
 
 ### 3. 日常运维与升级
 
@@ -228,10 +232,16 @@ bash scripts/export-backup.sh
 容器日志默认按每个服务 10 MB × 5 个文件轮换；如宿主机采用不同日志策略，可在
 `.env` 中覆盖 `DOCKER_LOG_MAX_SIZE` 与 `DOCKER_LOG_MAX_FILES`。
 
-如需使用预构建发行镜像而不是本机编译，请在 `.env` 中把 `BACKEND_IMAGE` 和
-`NGINX_IMAGE` 设置为精确版本标签，然后执行：
+如需使用预构建发行镜像而不是本机编译，只能使用 GitHub Release 中
+`image-digests-<版本>.txt` 记录的完整 `image@sha256:<64 位摘要>`。将第一行写入
+`.env` 的 `BACKEND_IMAGE`，第二行写入 `NGINX_IMAGE`；不要改用版本标签、`latest`
+或自行解析标签，因为 GHCR 标签不属于不可变 Release 资产。
 
 ```bash
+# 示例；请逐字复制对应 Release 资产中的两行完整 RepoDigest。
+BACKEND_IMAGE=ghcr.io/xhongduo-tech/apiplatform-backend@sha256:<64 位摘要>
+NGINX_IMAGE=ghcr.io/xhongduo-tech/apiplatform-web@sha256:<64 位摘要>
+
 docker compose --env-file .env -f docker-compose.app.yml pull
 docker compose --env-file .env -f docker-compose.app.yml up -d --wait
 ```
@@ -241,8 +251,11 @@ docker compose --env-file .env -f docker-compose.app.yml up -d --wait
 发行版不携带固定 admin 密码。首次打开 `/admin.html` 时，由管理员创建强密码，
 数据库只保存版本化 PBKDF2-SHA256 哈希。
 
-建议启动前设置一次性 `ADMIN_BOOTSTRAP_TOKEN`。首次认领必须提供该令牌，
+生产环境启动前必须设置一次性高熵 `ADMIN_BOOTSTRAP_TOKEN`。首次认领必须提供该令牌，
 初始化成功后它不再参与登录。数据库锁保证 first-claim 操作的并发安全。
+
+初始化后可在「后台 → 管理员安全」轮换密码。修改时必须提交当前密码；成功后会撤销
+此前签发的全部管理员会话，并为当前浏览器替换 HttpOnly 会话。
 
 > [!WARNING]
 > 请在本机或受信网络完成首次管理员认领后再开放服务。本发行版明确不包含外部
@@ -261,7 +274,7 @@ docker compose --env-file .env -f docker-compose.app.yml up -d --wait
 | `REDIS_PASSWORD` | Redis 凭据 | 必填；使用独立随机值 |
 | `JWT_SECRET` | 会话和令牌签名 | 必填；不要复用其他密钥 |
 | `DATA_ENCRYPTION_KEY` | AES-256-GCM 数据库字段加密 | 必填；独立的 32 字节 base64url 值 |
-| `ADMIN_BOOTSTRAP_TOKEN` | 首次管理员一次性认领 | 强烈建议配置 |
+| `ADMIN_BOOTSTRAP_TOKEN` | 首次管理员一次性认领 | 生产必填；至少 32 个随机字节 |
 | `SESSION_COOKIE_SECURE` | Cookie 仅通过 HTTPS 发送 | 接入 TLS 后设为 `true` |
 | `HTTP_BIND_ADDRESS` | Web 服务监听地址 | 初始化期间保持 `127.0.0.1` |
 | `DEMO_DATA_ENABLED` | 为全新空库写入虚构数据 | 纯净实例设为 `false` |
@@ -332,6 +345,11 @@ DEMO_DATA_ENABLED=false
 请按照 [安全政策](SECURITY.md) 私下报告漏洞。不要在公开 Issue 中披露凭据、
 数据库导出、私有日志或可直接使用的漏洞利用代码。
 
+开发与发布控制统一定义在[产品安全基线](docs/SECURITY_BASELINE.md)，并由
+[威胁模型](docs/THREAT_MODEL.md)与
+[OWASP ASVS 5.0 Level 2 跟踪表](docs/ASVS-5.0-L2.md)记录边界与证据。
+这些是透明的工程目标和证据索引，不是认证声明。
+
 ## 备份、恢复与离线部署
 
 Compose 备份边车默认每小时生成并校验一份 PostgreSQL custom-format 快照，
@@ -397,15 +415,27 @@ bash scripts/check-public-release.sh
 发布检查会扫描当前文件与 Git 历史中的凭据、数据库导出、旧组织标识、内部资料
 和本地生成文件。`VERSION` 是唯一发行版本源；`v<版本号>` 必须是由
 `徐鸿铎 <x.hongduo@hotmail.com>` 签署、直接指向发行提交的 annotated tag，且 GitHub
-必须返回 `verification.verified=true`、原因为 `valid`。该提交的六项发布关键 CI 也必须
-已经成功。`.github/workflows/release.yml` 会在 checkout 前通过 GitHub REST API 验证上述
-身份，再把检查绑定到默认分支上精确的 push workflow run 与提交，复核版本/变更记录并在
-发布前扫描镜像；随后发布带版本的 GHCR
-镜像、验证镜像包已公开且与仓库关联、对不可变摘要执行无密钥签名，并附加 SPDX SBOM
-证明。GitHub Release 采用可恢复的草稿流程，逐项核对资产名称、大小与 SHA-256 后才发布，
-且最终必须由 GitHub 标记为不可变。仓库管理员必须在创建 Tag 前启用不可变 Release。
-个人账户首次发布的 GHCR 包默认为私有，因此工作流会在签名和 Release 创建前暂停；管理员
-将两个包改为 **Public** 后，重新运行失败作业即可继续。
+必须返回 `verification.verified=true`、原因为 `valid`；发行提交还必须恰好等于默认分支
+当前 HEAD。该提交的六项发布关键 CI 和两项 CodeQL 语言分析都必须已经成功。
+`.github/workflows/release.yml` 会先把每次尝试推到唯一的 commit/run/attempt staging 标签，
+再以经过认证的 OCI manifest `HEAD` 与 `Docker-Content-Digest` 判断 canonical 标签状态；
+个人 Owner 的 Packages REST 404 不再被当作“包不存在”。候选摘要会重新扫描、验证精确
+SLSA provenance 与 Cosign 签名，并由固定 Syft 版本生成确定性 SPDX SBOM。工作流把 SBOM
+原件、精确 SBOM attestation、签名和 provenance 证据同时写入 Release 资产，在 canonical
+promotion 前还会对覆盖全部资产的 `SHA256SUMS-<版本>.txt` 做 keyless Cosign 签名并保存
+Sigstore bundle；最终 job 必须先完成该 bundle 的密码学验证，才会信任离线证据结构与文件
+哈希。工作流在 promotion 前后以及 Release 发布前后复核 tag、默认分支 HEAD、canonical RepoDigest 和 OCI
+referrers。最终发布 job 单独持有 `contents: write`，按 artifact ID 与 SHA-256 绑定交接，且
+只有 GitHub 将 Release 标记为不可变后才成功。仓库管理员必须在创建 Tag 前启用不可变
+Release。个人账户首次发布的 GHCR 包默认为私有，因此工作流会在签名、证明和 promotion
+完成后暂停；管理员将两个包关联本仓库并改为 **Public** 后，重新运行失败作业即可继续，
+且不会把私有包 404 误判为允许覆盖的 canonical 缺失。
+
+GHCR 不提供 tag 的原子“仅在不存在时创建”操作。`concurrency` 只会串行本仓库的
+发布作业，不会阻止 Owner 的 PAT、GitHub App、其它仓库或人工写入者。因此发布窗口
+必须由包管理员保证唯一写入者；前后检查只能证明最终摘要，不能证明狭窄竞态窗口内
+未发生过外部写入。所以签名的 digest 资产与按 RepoDigest 部署才是信任边界，版本 tag
+只用于发现。唯一写入者和单侧 promotion 恢复流程详见[发布清单](docs/RELEASE_CHECKLIST.md)。
 
 ## 项目文档
 
@@ -416,6 +446,10 @@ bash scripts/check-public-release.sh
 | [调度机制](docs/scheduling.md) | 调度、Leader 选举与 Redis Sentinel |
 | [离线部署](OFFLINE.md) | 空气隔离环境的构建和部署流程 |
 | [发布清单](docs/RELEASE_CHECKLIST.md) | 公开发布前的验证步骤 |
+| [安全基线](docs/SECURITY_BASELINE.md) | SSDF/ASVS/SLSA 控制、证据与发布门禁 |
+| [威胁模型](docs/THREAT_MODEL.md) | 资产、信任边界、威胁与剩余假设 |
+| [ASVS 5.0 L2 跟踪](docs/ASVS-5.0-L2.md) | 章节级适用性与验证状态 |
+| [运行时安全](docs/RUNTIME_SECURITY.md) | 首次认领、CORS 与限流故障边界 |
 | [开源发布复审](docs/OPEN_SOURCE_AUDIT.md) | 分级建议、审计证据与验收标准 |
 | [版本边界](docs/EDITION_BOUNDARIES.md) | 公开社区版与私有企业版的归属和兼容规则 |
 | [扩展 API](docs/EXTENSIONS.md) | 版本化加载契约、生命周期、安全依赖与 Provider 注册表 |

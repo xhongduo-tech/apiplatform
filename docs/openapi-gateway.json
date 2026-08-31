@@ -59,7 +59,7 @@
   "info": {
     "description": "Public OpenAI- and Anthropic-compatible inference gateway. Administrative and end-user portal APIs are intentionally excluded.",
     "title": "Open API Platform Gateway",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "openapi": "3.1.0",
   "paths": {

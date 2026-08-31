@@ -28,6 +28,7 @@ from app.models import ApiKeyORM, ModelRegistryORM
 from app.proxy import fallback, policy
 from app.proxy.client import get_client
 from app.proxy.db_bridge import prepare_proxy_request
+from app.proxy.request_body import read_json_object
 from app.proxy.routing import adapt_request, build_endpoint, select_endpoint
 from app.proxy.token_estimate import estimate_prompt_tokens_async
 from app.proxy.usage import (
@@ -283,7 +284,7 @@ async def simple_relay(
     request: Request, db: Session, authorization: str | None, path_suffix: str
 ) -> JSONResponse:
     """单次非流式中继（embeddings / rerank / images / ocr 共用）。"""
-    body = await request.json()
+    body = await read_json_object(request)
     prep = await prepare_proxy_request(authorization, body.get("model"))
     reserved = await policy.enforce_pre(prep.key, request, db, await estimate_prompt_tokens_async(body), model=prep.model)
 

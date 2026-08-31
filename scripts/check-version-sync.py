@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 
@@ -31,6 +32,20 @@ def main() -> int:
         "frontend/package-lock.json packages['']": package_lock["packages"][""]["version"],
         "backend/app/_version.py": _python_version(ROOT / "backend/app/_version.py"),
     }
+    compose = (ROOT / "docker-compose.app.yml").read_text(encoding="utf-8")
+    for variable, image in (
+        ("BACKEND_IMAGE", "apiplatform-backend"),
+        ("NGINX_IMAGE", "apiplatform-nginx"),
+    ):
+        values = set(re.findall(rf"\$\{{{variable}:-([^}}]+)\}}", compose))
+        if len(values) != 1:
+            versions[f"docker-compose.app.yml {variable}"] = repr(sorted(values))
+        else:
+            value = values.pop()
+            prefix = f"{image}:"
+            versions[f"docker-compose.app.yml {variable}"] = (
+                value.removeprefix(prefix) if value.startswith(prefix) else value
+            )
     mismatches = {name: value for name, value in versions.items() if value != expected}
     if mismatches:
         print(f"Version mismatch; VERSION is {expected!r}:")

@@ -299,8 +299,8 @@ async def _route(monkeypatch, client, *, with_fallback=True, stream=False):
         body["stream"] = True
 
     class _Req:
-        async def json(self):
-            return body
+        async def body(self):
+            return json.dumps(body).encode("utf-8")
 
     return await resp_mod.responses(_Req(), db=None, authorization="Bearer k")
 

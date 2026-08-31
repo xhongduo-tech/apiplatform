@@ -4,6 +4,34 @@ All notable changes are recorded here. The project follows Semantic Versioning.
 
 ## Unreleased
 
+## [1.0.1] - 2026-08-31
+
+### Security
+
+- Required a high-entropy one-time administrator bootstrap token in production
+  and limited wildcard CORS to bearer-authenticated gateway routes.
+- Added in-console administrator password rotation with current-password
+  verification, audit logging, and server-side revocation of every older admin
+  session. Existing admin sessions from 1.0.0 must sign in again after upgrade.
+- Made request admission fail closed when Redis rate-limit state is unavailable;
+  disabled night-time and model-category rate-limit bypasses by default.
+- Rejected malformed or non-object proxy JSON before routing and bounded,
+  validated administrator-configured upstream headers to prevent framing and
+  managed-header overrides.
+- Added CodeQL, Bandit, dependency review, OpenSSF Scorecard, stricter dependency
+  and container vulnerability gates, plus a versioned threat model and ASVS
+  Level 2 evidence tracker.
+- Hardened release provenance checks and offline packages with immutable image
+  identities, exact source commits, checksums, and an explicit unsigned-source
+  bundle boundary.
+
+### Operations
+
+- Documented the runtime security baseline, release-blocking criteria, incident
+  response process, and safe deployment settings for source and offline installs.
+- Disabled Gunicorn's unused filesystem control socket so the backend starts
+  cleanly under its read-only container filesystem.
+
 ## [1.0.0] - 2026-08-25
 
 ### Added

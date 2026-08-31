@@ -43,6 +43,27 @@ extension_manager = ExtensionManager()
 _SEED_ADVISORY_LOCK_ID = 0x41504953454544
 
 
+class GatewayCORSMiddleware(CORSMiddleware):
+    """只给无 Cookie 的公开中继端点提供跨源访问。
+
+    管理端和用户端 UI 使用同源 ``/api`` 请求。把通配 CORS 应用到整个应用会让
+    首次管理员认领等敏感端点也响应第三方站点的预检，因此非网关路径直接绕过
+    CORS 中间件，由浏览器的同源策略保护。
+    """
+
+    _GATEWAY_PREFIXES = ("/v1/", "/beta/v1/")
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if scope.get("type") == "http" and (
+            path == "/v1" or path == "/beta/v1"
+            or path.startswith(self._GATEWAY_PREFIXES)
+        ):
+            await super().__call__(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 def _seed_catalog() -> None:
     db = SessionLocal()
     try:
@@ -80,7 +101,7 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             if settings.REDIS_REQUIRED_ON_STARTUP:
                 raise RuntimeError(f"Redis 不可达，生产环境拒绝启动: {exc}") from exc
-            log.warning("Redis 连接失败（限流将降级为 fail-open）：%s", exc)
+            log.warning("Redis 连接失败（中继限流将 fail-closed 返回 503）：%s", exc)
 
         await usage_writer.start()
         await ops_scheduler.start()
@@ -139,9 +160,9 @@ app.include_router(api_router)
 # 调用中继接口。用户与管理员 Cookie 保持 same-origin；这里不启用
 # allow_credentials，避免通配来源携带平台会话 Cookie。
 app.add_middleware(
-    CORSMiddleware,
+    GatewayCORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
     expose_headers=["X-Resolved-Model", "X-Fallback-From", "Retry-After", "X-Request-Id"],
 )

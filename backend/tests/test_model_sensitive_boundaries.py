@@ -14,6 +14,7 @@ from app.model_secrets import (
     MASKED_SECRET,
     mask_sensitive_headers,
     merge_masked_sensitive_headers,
+    normalize_custom_headers,
     normalize_model_base_url,
 )
 from app.models import ModelRegistryORM
@@ -71,6 +72,39 @@ def test_sensitive_header_mask_and_merge_are_case_insensitive() -> None:
     assert merged["x_api_key"] == "real-key"
     assert merged["X-Trace-Id"] == "changed"
     assert "X-New-Token" not in merged
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Host": "metadata.internal"},
+        {"Content-Length": "1"},
+        {"Transfer-Encoding": "chunked"},
+        {"Connection": "keep-alive"},
+        {"X-Request-Id": "static-id"},
+        {"X-Test": "safe\r\nInjected: yes"},
+        {"X-Test": 123},
+        {"X-Test": "中文"},
+        {"X-Test": "x" * 8193},
+    ],
+)
+def test_custom_headers_reject_framing_and_unsafe_values(headers: dict) -> None:
+    with pytest.raises(ValueError):
+        normalize_custom_headers(headers)
+
+
+def test_custom_headers_accept_masked_authentication_fields() -> None:
+    assert normalize_custom_headers({
+        "Authorization": "Bearer secret",
+        "Cookie": "session=secret",
+        "X-Api-Key": "secret",
+        "X-Tenant": "tenant-1",
+    }) == {
+        "Authorization": "Bearer secret",
+        "Cookie": "session=secret",
+        "X-Api-Key": "secret",
+        "X-Tenant": "tenant-1",
+    }
 
 
 @pytest.fixture

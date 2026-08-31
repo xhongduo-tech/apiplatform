@@ -253,33 +253,31 @@ def _counts_from_tool_totals(totals: list[int]) -> dict:
 def _load_log_preview_tool_counts(
     db: Session,
     *,
-    key_ids: list[str],
+    key_ids: list[str] | None,
     since_utc: datetime,
 ) -> list[int]:
-    log_rows = db.execute(
-        select(UsageLogORM.response_preview)
-        .where(
-            UsageLogORM.api_key_id.in_(key_ids),
-            UsageLogORM.created_at >= since_utc,
-        )
-    ).all()
+    query = select(UsageLogORM.response_preview).where(
+        UsageLogORM.created_at >= since_utc,
+    )
+    if key_ids is not None:
+        query = query.where(UsageLogORM.api_key_id.in_(key_ids))
+    log_rows = db.execute(query).all()
     return [count_tool_calls_in_preview(r[0]) for r in log_rows]
 
 
 def build_tool_call_distribution(
     db: Session,
     *,
-    key_ids: list[str],
+    key_ids: list[str] | None,
     since_utc: datetime,
 ) -> dict:
     """按「一次对话 = 一次请求」分桶，口径对齐上下文长度（各次请求独立计入）。"""
-    rows = db.execute(
-        select(UsageRequestProfileORM.tool_calls_count)
-        .where(
-            UsageRequestProfileORM.api_key_id.in_(key_ids),
-            UsageRequestProfileORM.created_at >= since_utc,
-        )
-    ).all()
+    query = select(UsageRequestProfileORM.tool_calls_count).where(
+        UsageRequestProfileORM.created_at >= since_utc,
+    )
+    if key_ids is not None:
+        query = query.where(UsageRequestProfileORM.api_key_id.in_(key_ids))
+    rows = db.execute(query).all()
     totals = [int(r[0] or 0) for r in rows]
 
     # 历史流式路径 tool_calls_count 可能全 0；回落 logs 的 preview 启发式（非流式 JSON 或可命中）

@@ -35,6 +35,7 @@ jobs:
           REDIS_PASSWORD: compose-validation-redis-password
           JWT_SECRET: compose-validation-jwt-secret-at-least-32-characters
           DATA_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+          ADMIN_BOOTSTRAP_TOKEN: compose-validation-bootstrap-token-2026-08-31-at-least-32-bytes
         run: |
           docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.app.yml config -q
@@ -64,13 +65,30 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Python dependency audit
         run: |
-          python -m pip install --upgrade pip pip-audit
-          pip-audit -r backend/requirements.txt
-      - name: Frontend production dependency audit
+          python -m pip install --disable-pip-version-check pip-audit==2.10.1
+          python -m pip_audit --disable-pip --no-deps -r backend/requirements.lock
+          python -m pip_audit -r backend/requirements-dev.txt
+      - name: Frontend dependency audit
         working-directory: frontend
         run: |
           npm ci
-          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
 
   backend:
     name: Backend
@@ -109,6 +127,9 @@ jobs:
       - name: Lint (ruff)
         working-directory: backend
         run: python -m ruff check app tests ../scripts
+      - name: Security lint (Bandit)
+        working-directory: backend
+        run: python -m bandit -r app -ll -ii -q
       - name: Public OpenAPI export is current
         run: python scripts/export-openapi.py --check
       - name: 空库迁移到 head
@@ -186,7 +207,7 @@ jobs:
       REDIS_PASSWORD: e2e-redis-password-release-check
       JWT_SECRET: e2e-jwt-secret-release-check-at-least-32-characters
       DATA_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
-      ADMIN_BOOTSTRAP_TOKEN: e2e-bootstrap-token-release-check-2026
+      ADMIN_BOOTSTRAP_TOKEN: e2e-bootstrap-token-release-check-2026-08-31-at-least-32-bytes
       SESSION_COOKIE_SECURE: "false"
       DEMO_DATA_ENABLED: "false"
       HTTP_PORT: "18080"
@@ -263,22 +284,70 @@ jobs:
         run: docker build -t apiplatform-backend:ci backend
       - name: Build web image
         run: docker build -t apiplatform-nginx:ci -f nginx/Dockerfile .
-      - name: Scan backend image
+      - name: Scan backend image for all CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: apiplatform-backend:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: CRITICAL
+      - name: Scan backend image for fixable HIGH vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: apiplatform-backend:ci
           format: table
           exit-code: "1"
           ignore-unfixed: true
-          severity: CRITICAL,HIGH
-      - name: Scan web image
+          severity: HIGH
+      - name: Scan web image for all CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: apiplatform-nginx:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: CRITICAL
+      - name: Scan web image for fixable HIGH vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: apiplatform-nginx:ci
           format: table
           exit-code: "1"
           ignore-unfixed: true
-          severity: CRITICAL,HIGH
+          severity: HIGH
+      - name: Scan PostgreSQL runtime for all CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: CRITICAL
+      - name: Scan Redis runtime for all CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: CRITICAL
+      - name: Scan Prometheus runtime for all CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: CRITICAL
+      - name: Scan Grafana runtime for all CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: grafana/grafana:13.2.0@sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: CRITICAL
       - name: Generate backend SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:

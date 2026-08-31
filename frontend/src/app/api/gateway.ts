@@ -764,6 +764,20 @@ export const api = {
         ...(bootstrapToken !== undefined ? { bootstrap_token: bootstrapToken } : {}),
       }),
     }),
+  adminChangePassword: (
+    token: string,
+    currentPassword: string,
+    newPassword: string,
+    newPasswordConfirmation: string,
+  ) =>
+    adminReq<{ token: string; sessionsRevoked: boolean }>(token, "/api/admin/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+        new_password_confirmation: newPasswordConfirmation,
+      }),
+    }),
   adminSession: () => req<{ ok: boolean }>("/api/admin/session", { cache: "no-store" }),
   adminLogout: () => req<{ ok: boolean }>("/api/admin/logout", { method: "POST" }),
   adminStatsBreakdown: (token: string, params: BreakdownParams) =>

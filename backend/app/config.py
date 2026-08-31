@@ -6,24 +6,44 @@
 from __future__ import annotations
 
 import os
+import math
 
 
 def _f(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
+    raw = os.getenv(name)
+    if raw is None:
         return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} 必须是有效数字；收到 {raw!r}") from None
+    if not math.isfinite(value):
+        raise ValueError(f"{name} 必须是有限数字；收到 {raw!r}")
+    return value
 
 
 def _i(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
+    raw = os.getenv(name)
+    if raw is None:
         return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} 必须是有效整数；收到 {raw!r}") from None
 
 
 def _b(name: str, default: bool) -> bool:
-    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{name} 必须是 true/false、1/0、yes/no 或 on/off；收到无法识别的值 {raw!r}"
+    )
 
 
 class Settings:
@@ -61,6 +81,10 @@ class Settings:
     # Sentinel 模式下连 master 用的口令，须与部署配置的 requirepass 一致。
     REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
     REDIS_DB: int = _i("REDIS_DB", 0)
+    # 连接层和命令层均必须有界；限流准入另有覆盖整段操作的总超时。
+    REDIS_CONNECT_TIMEOUT_S: float = _f("REDIS_CONNECT_TIMEOUT_S", 2.0)
+    REDIS_SOCKET_TIMEOUT_S: float = _f("REDIS_SOCKET_TIMEOUT_S", 2.0)
+    RATE_LIMIT_ADMISSION_TIMEOUT_S: float = _f("RATE_LIMIT_ADMISSION_TIMEOUT_S", 3.0)
 
     # ── 热路径鉴权/模型解析缓存 ──────────────────────────────────────────────
     # API key 校验 + 模型解析的进程内 TTL 缓存（秒）。0 = 关闭。
@@ -84,6 +108,8 @@ class Settings:
         "SESSION_COOKIE_SECURE",
         os.getenv("ENVIRONMENT", "production").strip().lower() == "production",
     )
+    # production 必须显式注入高熵一次性认领令牌；开发/测试可留空以便本机联调。
+    # 管理员密码初始化后该令牌不再参与认证。
     ADMIN_BOOTSTRAP_TOKEN: str = os.getenv("ADMIN_BOOTSTRAP_TOKEN", "").strip()
     # 原始数据库备份包含审计日志等个人信息，默认仅允许下载脱敏导出。
     ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD: bool = _b("ALLOW_ADMIN_RAW_BACKUP_DOWNLOAD", False)
@@ -119,13 +145,23 @@ class Settings:
     # ── 限流（平台默认；管理员可在密钥管理中按 Key 上调/下调/设为无限）─────────
     RATE_LIMIT_RPM: int = _i("RATE_LIMIT_RPM", 600)
     RATE_LIMIT_TPM: int = _i("RATE_LIMIT_TPM", 6_000_000)
+    # 客户端省略 max_tokens/max_completion_tokens/max_output_tokens 时，TPM
+    # 预扣仍须给输出留出有界预算，不能只按 prompt 放行并发生成。
+    RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS: int = _i(
+        "RATE_LIMIT_DEFAULT_MAX_OUTPUT_TOKENS", 4096,
+    )
     # ── 夜间不限流窗口 ────────────────────────────────────────────────────
     # 每日 NIGHT_UNLIMITED_START 至次日 NIGHT_UNLIMITED_END（PLATFORM_TIMEZONE
-    # 本地时间，支持跨午夜）内跳过所有 Key 的 RPM/TPM 检查与 TPM 预扣——白天
-    # 配额留给在线业务，夜间批量任务放开跑。
-    NIGHT_UNLIMITED_ENABLED: bool = _b("NIGHT_UNLIMITED_ENABLED", True)
+    # 本地时间，支持跨午夜）内跳过所有 Key 的 RPM/TPM 检查与 TPM 预扣。
+    # 这是有意绕过准入保护的高风险兼容开关，安全默认必须关闭。
+    NIGHT_UNLIMITED_ENABLED: bool = _b("NIGHT_UNLIMITED_ENABLED", False)
     NIGHT_UNLIMITED_START: str = os.getenv("NIGHT_UNLIMITED_START", "19:00")
     NIGHT_UNLIMITED_END: str = os.getenv("NIGHT_UNLIMITED_END", "07:30")
+    # embedding/reranker 可能使用独立资源池，但默认仍与其他模型一样受 Key 的
+    # RPM/TPM 保护。只有部署方完成容量与滥用风险评估后才应显式开启豁免。
+    RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED: bool = _b(
+        "RATE_LIMIT_MODEL_EXEMPTIONS_ENABLED", False,
+    )
     # 平台业务时区：夜间窗口判定所用的本地时间。
     # 容器内系统时区是 UTC，不能直接用 datetime.now()。
     PLATFORM_TIMEZONE: str = os.getenv("PLATFORM_TIMEZONE", "Asia/Shanghai")
@@ -221,7 +257,8 @@ class Settings:
     OPS_REPORT_TIMEZONE: str = os.getenv("OPS_REPORT_TIMEZONE", "Asia/Shanghai")
 
     # ── Redis 依赖 ────────────────────────────────────────────────────────
-    # production 默认 Redis 不可达则拒绝启动；限流在 Redis 异常时 fail-open 放行。
+    # production 默认 Redis 不可达则拒绝启动；运行中限流依赖故障时中继准入
+    # fail-closed 返回 503，避免故障窗口静默变成无限流量。
     REDIS_REQUIRED_ON_STARTUP: bool = _b(
         "REDIS_REQUIRED_ON_STARTUP",
         os.getenv("ENVIRONMENT", "production").strip().lower() == "production",

@@ -10,6 +10,8 @@ your control.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-2563EB?style=flat-square)](LICENSE)
 [![CI](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xhongduo-tech/apiplatform/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/xhongduo-tech/apiplatform/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/xhongduo-tech/apiplatform/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/xhongduo-tech/apiplatform/badge)](https://scorecard.dev/viewer/?uri=github.com/xhongduo-tech/apiplatform)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
@@ -217,7 +219,10 @@ The default production endpoints bind to `127.0.0.1`:
 
 Keep the deployment on loopback until administrator bootstrap is complete.
 Then expose it through a trusted TLS reverse proxy, a specific management
-network address, or an explicit `HTTP_BIND_ADDRESS`.
+network address, or an explicit `HTTP_BIND_ADDRESS`. Before widening the bind
+address or serving a domain, terminate HTTPS at the trusted proxy and set
+`SESSION_COOKIE_SECURE=true`; the default `false` is only for loopback HTTP
+bootstrap and must never accompany externally reachable plaintext sessions.
 
 ### 3. Operate and upgrade the stack
 
@@ -246,8 +251,45 @@ Container logs rotate at 10 MB × 5 files per service by default. Override
 `DOCKER_LOG_MAX_SIZE` and `DOCKER_LOG_MAX_FILES` in `.env` when the host has a
 different logging policy.
 
-To deploy prebuilt images instead of compiling source, set `BACKEND_IMAGE` and
-`NGINX_IMAGE` in `.env` to the exact release tags, then run:
+The versioned local defaults in `docker-compose.app.yml` support source builds;
+they are not an authenticity boundary for prebuilt artifacts. For an official
+prebuilt deployment, copy the two complete `ghcr.io/...@sha256:...` references
+from the release's `image-digests-<version>.txt` into `.env`. Do not replace the
+digests with a tag:
+
+```dotenv
+BACKEND_IMAGE=ghcr.io/xhongduo-tech/apiplatform-backend@sha256:<64-hex-digest>
+NGINX_IMAGE=ghcr.io/xhongduo-tech/apiplatform-web@sha256:<64-hex-digest>
+```
+
+Authenticate to GHCR, then verify both the OCI-hosted GitHub provenance and the
+independent Cosign signature against the exact signed release tag and 40-character
+commit. `gh`, `cosign`, and `jq` must already be installed:
+
+```bash
+RELEASE_VERSION='<version>'
+RELEASE_COMMIT='<40-character-release-commit>'
+BACKEND_IMAGE='ghcr.io/xhongduo-tech/apiplatform-backend@sha256:<64-hex-digest>'
+NGINX_IMAGE='ghcr.io/xhongduo-tech/apiplatform-web@sha256:<64-hex-digest>'
+
+gh auth token | docker login ghcr.io -u "$(gh api user --jq .login)" --password-stdin
+for image in "$BACKEND_IMAGE" "$NGINX_IMAGE"; do
+  gh attestation verify "oci://${image}" \
+    --bundle-from-oci \
+    --repo xhongduo-tech/apiplatform \
+    --signer-workflow xhongduo-tech/apiplatform/.github/workflows/release.yml \
+    --source-ref "refs/tags/v${RELEASE_VERSION}" \
+    --source-digest "$RELEASE_COMMIT" \
+    --deny-self-hosted-runners
+  cosign verify \
+    --certificate-identity \
+      "https://github.com/xhongduo-tech/apiplatform/.github/workflows/release.yml@refs/tags/v${RELEASE_VERSION}" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "$image"
+done
+```
+
+After verification, persist those exact digest references in `.env` and run:
 
 ```bash
 docker compose --env-file .env -f docker-compose.app.yml pull
@@ -263,6 +305,11 @@ PBKDF2-SHA256 hash.
 Set a one-time `ADMIN_BOOTSTRAP_TOKEN` before startup. The first claim must
 provide this token; it is no longer involved after initialization. Database
 locking makes the first-claim operation concurrency-safe.
+
+After initialization, use **Admin Console → Admin Security** to rotate the
+password. The current password is required, and a successful change revokes
+every previously issued admin session while replacing the current browser's
+HttpOnly session.
 
 > [!WARNING]
 > Complete the first-admin claim from localhost or a trusted network before
@@ -284,7 +331,7 @@ require a frontend rebuild.
 | `REDIS_PASSWORD` | Redis credential | Required; unique random value |
 | `JWT_SECRET` | Session and token signing | Required; do not reuse another secret |
 | `DATA_ENCRYPTION_KEY` | AES-256-GCM database field encryption | Required; independent 32-byte base64url value |
-| `ADMIN_BOOTSTRAP_TOKEN` | One-time first-admin claim | Strongly recommended |
+| `ADMIN_BOOTSTRAP_TOKEN` | One-time first-admin claim | Required in production; at least 32 random bytes |
 | `SESSION_COOKIE_SECURE` | Restrict cookies to HTTPS | Set to `true` behind TLS |
 | `HTTP_BIND_ADDRESS` | Public web bind address | Keep `127.0.0.1` during bootstrap |
 | `DEMO_DATA_ENABLED` | Load fictional data into a new empty database | Set to `false` for a blank instance |
@@ -366,6 +413,12 @@ Please report vulnerabilities privately according to [SECURITY.md](SECURITY.md).
 Do not disclose credentials, database dumps, private logs, or working exploits
 in public issues.
 
+Development and release controls are defined in the
+[product security baseline](docs/SECURITY_BASELINE.md), with an explicit
+[threat model](docs/THREAT_MODEL.md) and
+[OWASP ASVS 5.0 Level 2 tracker](docs/ASVS-5.0-L2.md). These are transparent
+engineering targets and evidence indexes, not certification claims.
+
 ## Backup, restore, and offline deployment
 
 The Compose backup sidecar creates and verifies a PostgreSQL custom-format
@@ -402,6 +455,22 @@ python -m pytest
 python -m alembic upgrade head
 ```
 
+Production dependencies have two coordinated inputs: `requirements.txt` is the
+review/Dependabot surface, while the hash-locked `requirements.lock` is the
+container and release install surface. After changing a direct pin (including
+one with extras), regenerate and validate the lock in an isolated maintainer
+environment:
+
+```bash
+cd backend
+python -m piptools compile --generate-hashes --resolver=backtracking \
+  --output-file requirements.lock requirements.txt
+cd ..
+python scripts/check-requirements-lock.py
+python scripts/test-requirements-lock-sync.py
+python -m pip install --require-hashes --requirement backend/requirements.lock
+```
+
 Frontend:
 
 ```bash
@@ -433,19 +502,56 @@ database exports, former organization identifiers, internal artifacts, and
 generated local files. `VERSION` is the single release version source. A
 `v<version>` tag must be an annotated tag signed by
 `徐鸿铎 <x.hongduo@hotmail.com>`, point directly at the release commit, and have
-GitHub report `verification.verified=true` with reason `valid`. The commit's six
-release-critical CI jobs must already have succeeded. `.github/workflows/release.yml`
-checks that identity through the GitHub REST API before checkout, then verifies
-the CI checks and version/changelog identity, scans images before publication,
-publishes versioned GHCR images, verifies that both packages are public and linked
-to this repository, keyless-signs their immutable digests, attaches SPDX SBOM attestations, and
-creates or resumes a draft GitHub Release, verifies every asset digest, and only
-then publishes it. The workflow also fails closed unless GitHub marks the
-published release immutable; a repository administrator must enable immutable
-releases before the tag is created. A personal
-account's first GHCR publication pauses before release creation until the owner
-changes both new packages from their default private visibility to **Public**;
-rerunning that failed job then completes the release.
+GitHub report `verification.verified=true` with reason `valid`. That commit must
+also be the current default-branch HEAD, and its six release-critical CI jobs and
+both CodeQL language analyses must already have succeeded.
+`.github/workflows/release.yml` pushes every attempt to unique
+commit/run/attempt staging tags, binds Docker's push acknowledgement, and uses an
+authenticated OCI manifest `HEAD` plus `Docker-Content-Digest` to determine the
+canonical tag state; a personal-owner Packages REST 404 is never treated as
+proof that a private package is absent. The selected exact digests are rescanned,
+their commit-bound SLSA provenance and Cosign signatures are verified, and a
+reproducible SPDX SBOM is generated with a pinned Syft version. The SBOM itself,
+its exact Cosign attestation, signatures, and provenance verification evidence
+are captured as Release assets. Before artifact hand-off, the workflow also
+keyless-signs the complete `SHA256SUMS-<version>.txt` manifest into a Sigstore
+bundle. The final job cryptographically verifies that bundle before it trusts
+the offline evidence structure or any asset checksum. The workflow rechecks the signed tag, exact
+default-branch HEAD, canonical RepoDigests, and live OCI referrers before and
+after canonical promotion and around Release publication. A separate final job
+alone receives `contents: write`, downloads the bundle by artifact ID, verifies
+its artifact digest and an explicit 15-file allowlist rather than trusting the
+contents of the hand-off directory. Before signing, the image job separately
+requires its exact 13-file payload allowlist, so an earlier action cannot add an
+unintended file to the checksummed bundle. The final clean checkout also expands
+the source `.tar.gz` and byte-compares it with a fresh deterministic `git archive`
+tar stream from `HEAD`. It then creates Releases with a fixed
+workflow-bot author, title, body, and tag. On a rerun it downloads every asset of
+an existing draft or immutable Release, using one exact filename pattern per
+allowlisted asset, into a fresh directory and authenticates
+that candidate's own keyless checksum bundle against the fixed workflow identity,
+GitHub issuer, and current release commit SHA, followed by exact checksum coverage, evidence,
+image digest file, source archive, and live OCI state. A complete valid draft is reused byte for
+byte; only an empty draft may receive current-run assets, and uploads never use an
+overwrite option. Any non-empty incomplete or mismatched draft fails with an
+explicit manual delete-and-rebuild instruction. A previously published Release
+is accepted only after the same verification and only when GitHub reports it as
+immutable. An administrator must enable immutable releases before creating the
+tag. A personal account's first GHCR publication pauses
+after verified promotion until both packages are linked to this repository and
+changed from their default private visibility to **Public**. Rerunning the failed
+job revalidates and reuses the canonical digests without inferring absence from a
+private-package 404.
+
+GHCR tag creation is not an atomic create-if-absent operation. Release
+`concurrency` serializes this repository's workflow runs, but package
+administrators must keep every other PAT, App, repository, and manual writer out
+of the promotion window. The before/after checks prove the final selected digest;
+they cannot prove that an external writer did not race inside that interval. For
+that reason the signed digest asset and digest-only deployment commands are the
+trust boundary; version tags are only a discovery convenience. The exact
+single-writer and partial-promotion recovery procedure is in the
+[release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Documentation
 
@@ -456,6 +562,10 @@ rerunning that failed job then completes the release.
 | [Scheduling](docs/scheduling.md) | Scheduling, leader election, and Redis Sentinel notes |
 | [Offline deployment](OFFLINE.md) | Air-gapped build and deployment workflow |
 | [Release checklist](docs/RELEASE_CHECKLIST.md) | Public-release verification steps |
+| [Security baseline](docs/SECURITY_BASELINE.md) | SSDF/ASVS/SLSA controls, evidence and release gates |
+| [Threat model](docs/THREAT_MODEL.md) | Assets, trust boundaries, threats and residual assumptions |
+| [ASVS 5.0 L2 tracker](docs/ASVS-5.0-L2.md) | Chapter-level applicability and verification status |
+| [Runtime security](docs/RUNTIME_SECURITY.md) | First-admin, CORS and rate-limit failure boundaries |
 | [Open-source audit](docs/OPEN_SOURCE_AUDIT.md) | Prioritized findings, evidence, and acceptance criteria |
 | [Edition boundaries](docs/EDITION_BOUNDARIES.md) | Public Community versus private Enterprise ownership and compatibility rules |
 | [Extension API](docs/EXTENSIONS.md) | Versioned loading contract, lifecycle, security dependencies, and provider registry |

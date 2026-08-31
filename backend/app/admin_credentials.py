@@ -40,6 +40,7 @@ class AdminPasswordPolicyError(ValueError):
 class AdminAuthentication:
     authenticated: bool
     initialized_now: bool = False
+    token_version: int = 0
 
 
 def _credential_row(db: Session) -> PlatformSettingORM | None:
@@ -51,6 +52,20 @@ def _stored_password_hash(row: PlatformSettingORM | None) -> str | None:
         return None
     stored_hash = row.value.get("password_hash")
     return stored_hash if isinstance(stored_hash, str) and stored_hash else None
+
+
+def _stored_token_version(row: PlatformSettingORM | None) -> int:
+    if row is None or not isinstance(row.value, dict):
+        return 0
+    try:
+        return max(0, int(row.value.get("token_version", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def admin_token_version(db: Session) -> int:
+    """Current server-side version used to revoke all older admin sessions."""
+    return _stored_token_version(_credential_row(db))
 
 
 def admin_password_is_initialized(db: Session) -> bool:
@@ -78,7 +93,10 @@ def authenticate_or_initialize_admin(
     row = _credential_row(db)
     stored_hash = _stored_password_hash(row)
     if stored_hash is not None:
-        return AdminAuthentication(verify_password(password, stored_hash))
+        return AdminAuthentication(
+            verify_password(password, stored_hash),
+            token_version=_stored_token_version(row),
+        )
 
     if password_confirmation is None:
         raise AdminSetupRequired("管理员尚未初始化，请确认首次设置的密码")
@@ -97,14 +115,21 @@ def authenticate_or_initialize_admin(
         ).scalar_one()
         winner_hash = _stored_password_hash(locked)
         if winner_hash is not None:
-            return AdminAuthentication(verify_password(password, winner_hash))
-        locked.value = {"version": 1, "password_hash": password_hash}
+            return AdminAuthentication(
+                verify_password(password, winner_hash),
+                token_version=_stored_token_version(locked),
+            )
+        locked.value = {
+            "version": 1,
+            "password_hash": password_hash,
+            "token_version": 0,
+        }
         db.commit()
         return AdminAuthentication(authenticated=True, initialized_now=True)
 
     candidate = PlatformSettingORM(
         key=ADMIN_CREDENTIALS_KEY,
-        value={"version": 1, "password_hash": password_hash},
+        value={"version": 1, "password_hash": password_hash, "token_version": 0},
     )
     try:
         # SAVEPOINT 将唯一键竞争限制在局部；失败后 session 仍可回读胜出的记录。
@@ -119,4 +144,42 @@ def authenticate_or_initialize_admin(
         stored_hash = _stored_password_hash(winner)
         return AdminAuthentication(
             authenticated=stored_hash is not None and verify_password(password, stored_hash),
+            token_version=_stored_token_version(winner),
         )
+
+
+def change_admin_password(
+    db: Session,
+    current_password: str,
+    new_password: str,
+    new_password_confirmation: str,
+) -> AdminAuthentication:
+    """Atomically rotate the shared admin password and revoke older sessions."""
+    if new_password != new_password_confirmation:
+        raise AdminPasswordPolicyError("两次输入的新管理员密码不一致")
+    validate_admin_password(new_password)
+
+    locked = db.execute(
+        select(PlatformSettingORM)
+        .where(PlatformSettingORM.key == ADMIN_CREDENTIALS_KEY)
+        .with_for_update()
+    ).scalar_one_or_none()
+    stored_hash = _stored_password_hash(locked)
+    if stored_hash is None:
+        raise AdminSetupRequired("管理员尚未初始化")
+    if not verify_password(current_password, stored_hash):
+        return AdminAuthentication(
+            authenticated=False,
+            token_version=_stored_token_version(locked),
+        )
+    if verify_password(new_password, stored_hash):
+        raise AdminPasswordPolicyError("新管理员密码不能与当前密码相同")
+
+    token_version = _stored_token_version(locked) + 1
+    locked.value = {
+        "version": 1,
+        "password_hash": hash_password(new_password),
+        "token_version": token_version,
+    }
+    db.flush()
+    return AdminAuthentication(authenticated=True, token_version=token_version)

@@ -16,12 +16,14 @@ from app.admin_credentials import (
     AdminAuthentication,
     AdminPasswordPolicyError,
     AdminSetupRequired,
+    admin_token_version,
     admin_password_is_initialized,
     authenticate_or_initialize_admin,
+    change_admin_password,
     validate_admin_password,
 )
 from app.auth import hash_password, verify_password
-from app.models import PlatformSettingORM
+from app.models import AuditLogORM, PlatformSettingORM
 
 
 @pytest.fixture
@@ -32,6 +34,7 @@ def credential_db():
         poolclass=StaticPool,
     )
     PlatformSettingORM.__table__.create(engine)
+    AuditLogORM.__table__.create(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     with session_factory() as db:
         yield db
@@ -86,11 +89,61 @@ def test_first_login_requires_confirmation_and_only_stores_hash(credential_db):
     row = credential_db.get(PlatformSettingORM, ADMIN_CREDENTIALS_KEY)
     assert row is not None
     assert row.value.get("version") == 1
+    assert row.value.get("token_version") == 0
     assert row.value["password_hash"].startswith("pbkdf2_sha256$")
     assert password not in str(row.value)
 
     assert authenticate_or_initialize_admin(credential_db, password).authenticated
     assert not authenticate_or_initialize_admin(credential_db, "Wrong-Password-8!").authenticated
+
+
+def test_password_rotation_increments_server_session_version(credential_db):
+    authenticate_or_initialize_admin(
+        credential_db, "Open-Platform-7!", "Open-Platform-7!",
+    )
+    assert admin_token_version(credential_db) == 0
+
+    wrong = change_admin_password(
+        credential_db,
+        "Wrong-Password-8!",
+        "New-Platform-Password-8!",
+        "New-Platform-Password-8!",
+    )
+    assert not wrong.authenticated
+    credential_db.rollback()
+
+    with pytest.raises(AdminPasswordPolicyError, match="不一致"):
+        change_admin_password(
+            credential_db,
+            "Open-Platform-7!",
+            "New-Platform-Password-8!",
+            "Different-Platform-Password-9!",
+        )
+    with pytest.raises(AdminPasswordPolicyError, match="不能与当前密码相同"):
+        change_admin_password(
+            credential_db,
+            "Open-Platform-7!",
+            "Open-Platform-7!",
+            "Open-Platform-7!",
+        )
+    assert admin_token_version(credential_db) == 0
+
+    rotated = change_admin_password(
+        credential_db,
+        "Open-Platform-7!",
+        "New-Platform-Password-8!",
+        "New-Platform-Password-8!",
+    )
+    assert rotated.authenticated
+    assert rotated.token_version == 1
+    credential_db.commit()
+    assert admin_token_version(credential_db) == 1
+    assert not authenticate_or_initialize_admin(
+        credential_db, "Open-Platform-7!",
+    ).authenticated
+    assert authenticate_or_initialize_admin(
+        credential_db, "New-Platform-Password-8!",
+    ).authenticated
 
 
 def test_first_login_recovers_an_empty_migration_placeholder(credential_db):
@@ -212,3 +265,61 @@ def test_admin_bootstrap_token_is_required_only_for_first_claim(credential_db, m
         # 初始化后环境中的 bootstrap token 被忽略，普通密码登录即可。
         logged_in = client.post("/api/admin/login", json={"password": "Open-Platform-7!"})
         assert logged_in.status_code == 200
+
+
+def test_admin_password_change_revokes_older_bearer_sessions(credential_db, monkeypatch):
+    from app.database import get_db
+    from app.routers import admin as admin_router
+
+    app = FastAPI()
+    app.include_router(admin_router.router, prefix="/api")
+
+    def _get_test_db():
+        yield credential_db
+
+    app.dependency_overrides[get_db] = _get_test_db
+    monkeypatch.setattr(admin_router, "redis", _AvailableRedis())
+
+    with TestClient(app) as client:
+        claimed = client.post("/api/admin/login", json={
+            "password": "Open-Platform-7!",
+            "password_confirmation": "Open-Platform-7!",
+        })
+        assert claimed.status_code == 200
+        old_token = claimed.json()["token"]
+
+        rejected = client.post("/api/admin/change-password", json={
+            "current_password": "Wrong-Password-8!",
+            "new_password": "New-Platform-Password-8!",
+            "new_password_confirmation": "New-Platform-Password-8!",
+        })
+        assert rejected.status_code == 400
+        assert client.get("/api/admin/session", headers={
+            "Authorization": f"Bearer {old_token}",
+        }).status_code == 200
+
+        changed = client.post("/api/admin/change-password", json={
+            "current_password": "Open-Platform-7!",
+            "new_password": "New-Platform-Password-8!",
+            "new_password_confirmation": "New-Platform-Password-8!",
+        })
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["sessionsRevoked"] is True
+        new_token = changed.json()["token"]
+        assert new_token != old_token
+        assert changed.headers["cache-control"] == "no-store"
+
+        stale = client.get("/api/admin/session", headers={
+            "Authorization": f"Bearer {old_token}",
+        })
+        assert stale.status_code == 401
+        current = client.get("/api/admin/session", headers={
+            "Authorization": f"Bearer {new_token}",
+        })
+        assert current.status_code == 200
+        assert client.post(
+            "/api/admin/login", json={"password": "Open-Platform-7!"},
+        ).status_code == 401
+        assert client.post(
+            "/api/admin/login", json={"password": "New-Platform-Password-8!"},
+        ).status_code == 200

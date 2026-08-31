@@ -3,18 +3,18 @@
 #
 # 用法：
 #   docker compose -f docker-compose.app.yml -f docker-compose.sentinel.yml up -d
-# 并以环境变量启用后端的 Sentinel 发现（覆盖内置默认）：
-#   REDIS_SENTINEL_NODES=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-#   REDIS_SENTINEL_MASTER=apiplatform-master
+# overlay 会自动把三个 Sentinel 地址注入 backend；跨主机部署时再通过
+# REDIS_SENTINEL_NODES 覆盖这些服务名。
 #
-# 口令必须与主 compose 的 REDIS_PASSWORD 一致，不在源码中预置。
+# master 复制/连接口令使用主 compose 的 REDIS_PASSWORD；Sentinel API
+# 可另用 REDIS_SENTINEL_PASSWORD 保护。两者均不在源码中预置。
 #
 # 拓扑：redis(master) + redis-replica + sentinel×3（quorum=2）。
 # master 进程/容器故障后 sentinel 提升 replica，backend 经 master_for 自动
-# 跟随新 master；切换窗口内的限流命令按 fail-open 放行，不产生业务错误。
-# 实测（down-after 5000 / failover-timeout 15000）：从杀 master 到客户端在新
-# master 恢复时间取决于部署方的 Sentinel 参数；切换窗口内请求不报错（fail-open），只是 RPM/TPM
-# 限流计数暂时失效（放开不计），切换完成即恢复。若需更短切换，可调低
+# 跟随新 master；切换窗口内无法安全判定 RPM/TPM 时，中继关闭式返回 503
+# 与 `Retry-After: 5`，避免协调层故障变成无限流量。
+# master 恢复时间取决于部署方的 Sentinel 参数；切换完成后请求自动恢复。
+# 若需更短切换，可调低
 # down-after-milliseconds（代价是更易因瞬时抖动误判）。原 master 恢复后被
 # sentinel 收编为 replica，不抢回主位。
 #
@@ -26,6 +26,8 @@
 x-sentinel-common: &sentinel-common
   image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
   restart: unless-stopped
+  environment:
+    REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
   depends_on:
     redis:
       condition: service_healthy
@@ -44,9 +46,19 @@ x-sentinel-common: &sentinel-common
       sentinel announce-hostnames yes
       sentinel auth-pass apiplatform-master ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
       EOF
+      if [ -n "$${REDIS_SENTINEL_PASSWORD:-}" ]; then
+        printf 'requirepass %s\n' "$${REDIS_SENTINEL_PASSWORD}" >>/tmp/sentinel.conf
+      fi
       exec redis-sentinel /tmp/sentinel.conf
 
 services:
+  backend:
+    environment:
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+
   redis-replica:
     image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
     restart: unless-stopped
