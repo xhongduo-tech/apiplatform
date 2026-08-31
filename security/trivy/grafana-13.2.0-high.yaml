@@ -1,0 +1,522 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "CVE-2026-14456",
+      "purls": [
+        "pkg:apk/alpine/libcrypto3@3.5.7-r0?arch=x86_64&distro=3.24.1",
+        "pkg:apk/alpine/libssl3@3.5.7-r0?arch=x86_64&distro=3.24.1",
+        "pkg:apk/alpine/libcrypto3@3.5.7-r0?arch=aarch64&distro=3.24.1",
+        "pkg:apk/alpine/libssl3@3.5.7-r0?arch=aarch64&distro=3.24.1"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: the shipped Grafana boundary does not create an OpenSSL QUIC listener; replace the exact image before expiry."
+    },
+    {
+      "id": "CVE-2026-21728",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-25679",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-25681",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-27136",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-27145",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-28377",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-29181",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-32280",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-32281",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-32283",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-33811",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-33814",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-33818",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-39820",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-39821",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-39822",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-39836",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-39883",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-42499",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-42504",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-46600",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-56852",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-56853",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-56858",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-56859",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-56860",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "CVE-2026-56862",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/elasticsearch/gpx_grafana_elasticsearch_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/influxdb/gpx_grafana_influxdb_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mssql/gpx_grafana-mssql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/mysql/gpx_grafana-mysql-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/zipkin/gpx_grafana-zipkin-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    },
+    {
+      "id": "GHSA-hrxh-6v49-42gf",
+      "paths": [
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/jaeger/gpx_grafana-jaeger-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/opentsdb/gpx_grafana-opentsdb-datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_arm64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_amd64",
+        "usr/share/grafana/data/plugins-bundled/tempo/gpx_grafana-tempo-datasource_linux_arm64"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-002: time-bounded acceptance for exact bundled binaries under the documented restricted Grafana boundary."
+    }
+  ]
+}
+

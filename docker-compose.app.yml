@@ -25,6 +25,9 @@ services:
     restart: unless-stopped
     logging: *default-logging
     shm_size: 256mb
+    # Start as the image's postgres account instead of entering as root and
+    # invoking gosu. This is also a compensating control for SEC-2026-001.
+    user: "70:70"
     environment:
       POSTGRES_DB: openapi_platform
       POSTGRES_USER: platform
@@ -38,6 +41,14 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./postgres/config/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/run/postgresql:size=16m,uid=70,gid=70,mode=3775
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     command: >
       postgres
       -c config_file=/etc/postgresql/postgresql.conf
@@ -68,6 +79,18 @@ services:
       - pgbackups:/backups
       - ./postgres/backup-loop.sh:/backup-loop.sh:ro
       - ./postgres/backup-healthcheck.sh:/backup-healthcheck.sh:ro
+    # The custom shell entrypoint never invokes gosu. Root is retained only to
+    # assign the backend reader group on new snapshots; every other capability
+    # is removed and the image filesystem is immutable.
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,14 +107,25 @@ services:
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging
+    # Skip the image's root entrypoint branch and run directly as redis.
+    user: "999:1000"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--requirepass", "${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD}"]
     volumes:
       - redisdata:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     # 仅绑回环，不暴露到 LAN
     ports:
       - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:?请在 .env 中设置随机 REDIS_PASSWORD} ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --raw ping | grep -qx PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -191,7 +225,7 @@ services:
 
   # ── 监控（Prometheus 抓 backend:8000/metrics，Grafana 出看板）─────────────────
   prometheus:
-    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69}
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0}
     pull_policy: ${COMPOSE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     logging: *default-logging

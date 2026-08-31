@@ -24,6 +24,22 @@ deleted from the current checkout. Complete every item below for each release.
       [security exception template](SECURITY_EXCEPTION_TEMPLATE.md), has the
       required owner and independent approval, and is unexpired on the release
       date. Missing approval or expiry blocks the release.
+- [ ] Every Trivy ignore is limited to the exact reviewed component/path,
+      links to its human exception record, passes
+      `scripts/check-container-security-exceptions.py`, and has its independent
+      approval URL preserved in the release evidence. A suppressed scan alone
+      is not approval.
+- [ ] Download and archive the CI
+      `third-party-container-vulnerability-evidence` artifact. Record its
+      scanner/database timestamp, platform, exact image digest, unfiltered and
+      unexcepted counts, exception expiry, and independent approval URL.
+- [ ] If the `container-security` job body changed, review the complete job and
+      record why each command, Action input or ordering change is safe before
+      updating `CONTAINER_SECURITY_JOB_SHA256`; never refresh that digest as an
+      unexplained mechanical change.
+- [ ] Confirm no root-level `.trivyignore`, `trivy.yaml`, or equivalent implicit
+      Trivy file exists; all accepted findings must use the explicit,
+      severity-specific reviewed exception paths.
 - [ ] The threat model and ASVS tracker cover every new endpoint, trust
       boundary, secret, data store, deployment mode and privileged workflow.
 - [ ] Public registration/recovery and demo data match the intended deployment
@@ -41,6 +57,11 @@ deleted from the current checkout. Complete every item below for each release.
 - [ ] Backup checksum, retention, encryption/storage policy and off-host copy
       are configured.
 - [ ] A restore into an isolated database was completed and validated.
+- [ ] When the Sentinel overlay is supported, its failover drill passes the
+      full container/network recreation and one-state-volume-loss cases. The
+      two Redis data volumes and three Sentinel state volumes are retained as
+      one recovery set; all three Sentinel volumes are never reinitialized
+      while Redis data is retained.
 - [ ] RPO, RTO, rollback and configuration changes are documented.
 
 ## Quality

@@ -45,6 +45,33 @@ fix” by itself is not an exception. Every exception must use the
 the required independent reviewer, and remain unexpired on the release date;
 an expired or incompletely approved record cannot satisfy a gate.
 
+Scanner suppressions are controls, not comments. A suppression must be scoped
+to one exact component or path, link to a reviewed exception record, carry an
+enforced expiry, and preserve an unsuppressed scan of all other findings. CI
+must fail when the record, exact image digest, compensating deployment control,
+or expiry drifts. Protected-branch approval is part of the exception evidence;
+a green scanner result by itself does not approve the risk.
+The container job preserves unfiltered High/Critical JSON reports for every
+excepted third-party image even when a blocking scan fails. Release evidence
+must bind the report, scanner/database timestamp, target platform, exact image
+digest, pre/post-exception counts, exception record, and approval URL.
+Before blocking scans run, CI also compares every fixable-High and all-Critical
+report scope in both directions with the reviewed path/PURL sets. A new
+Critical or fixable-High finding, stale exception, architecture mismatch,
+malformed report, scanner-version drift, or vulnerability database older than
+72 hours fails closed. Unfixable High findings remain in the unfiltered evidence
+for release risk assessment; this gate does not represent them as remediated.
+The checker also locks the complete `container-security` job body. Treat a job
+digest change as a security review event: review every step, command, action
+input and ordering change before updating the lock. The protected workflow,
+independent reviewer, pinned Actions, hosted runner and GitHub artifact service
+remain trust roots; the pull-request evidence artifact is not represented as an
+independently signed release attestation.
+Root-level `.trivyignore`, `trivy.yaml` and equivalent implicit files are
+forbidden because Trivy would auto-load them before producing evidence. Every
+permitted exception is instead named explicitly by one locked scan step and
+validated against its human risk record.
+
 ## Security gates
 
 Every pull request to `main` must pass the release hygiene, dependency,
@@ -98,3 +125,17 @@ The web image uses a digest-pinned unprivileged Nginx runtime and runs as UID
 `101`; the Node build stage is not copied into the runtime. Base-image digest
 updates remain release-gated by both web-image vulnerability scans and a new
 SPDX SBOM.
+
+Third-party Compose images are also digest-pinned. Redis and Prometheus have
+blocking all-Critical and fixable-High gates. Redis additionally starts directly
+as its non-root image account with a read-only root filesystem, no capabilities,
+and `no-new-privileges`. PostgreSQL has the same two gates;
+the dedicated, exact-digest exceptions in
+[SEC-2026-001](security-exceptions/SEC-2026-001-postgres-runtime.md) expire
+automatically and are valid only with the documented non-root/read-only
+database boundary and independently approved release evidence. Grafana keeps
+an unfiltered all-Critical gate and a separate fixable-High gate whose exact
+component exceptions are recorded in
+[SEC-2026-002](security-exceptions/SEC-2026-002-grafana-runtime.md). The default
+restricted Grafana boundary is a compensating control, not a remediation or a
+claim that affected bundled plugins are unreachable.

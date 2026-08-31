@@ -239,7 +239,9 @@ docker compose down
 ```
 
 Do not run `docker compose down --volumes` on a production project: it deletes
-PostgreSQL, Redis, backup, Grafana, Prometheus, and usage-failover volumes.
+PostgreSQL, Redis, backup, Grafana, Prometheus, and usage-failover volumes, plus
+the replica AOF and three Sentinel state volumes when the optional overlay is
+enabled.
 Before every upgrade, export a verified backup and retain the matching
 `DATA_ENCRYPTION_KEY`:
 
@@ -250,6 +252,32 @@ bash scripts/export-backup.sh
 Container logs rotate at 10 MB × 5 files per service by default. Override
 `DOCKER_LOG_MAX_SIZE` and `DOCKER_LOG_MAX_FILES` in `.env` when the host has a
 different logging policy.
+
+For optional process-level Redis high availability, generate a second,
+independent secret with `openssl rand -hex 32`, place it in `.env` as
+`REDIS_SENTINEL_PASSWORD`, and start the Sentinel overlay:
+
+```bash
+docker compose \
+  -f docker-compose.app.yml \
+  -f docker-compose.sentinel.yml \
+  up -d --wait
+
+bash scripts/test-sentinel-failover.sh
+```
+
+The overlay refuses an empty Sentinel management password. It persists both
+Redis AOF volumes and all three Sentinel election-state volumes, derives each
+Redis node's role from a stable 2-of-3 Sentinel majority at startup, and gates
+backend startup until that majority points to a reachable master. Treat the
+two Redis data volumes and three Sentinel state volumes as one recovery set:
+never recreate all three Sentinel volumes while retaining either Redis data
+volume. One lost Sentinel state volume is tolerated and covered by the drill;
+losing the complete control-plane state is a restore event, not a fresh boot.
+The volumes contain authentication material and must not be published as
+diagnostic artifacts. This single-host overlay handles process/container
+failure; host, rack, or zone failure requires placing the replica and a quorum
+across independent failure domains.
 
 The versioned local defaults in `docker-compose.app.yml` support source builds;
 they are not an authenticity boundary for prebuilt artifacts. For an official

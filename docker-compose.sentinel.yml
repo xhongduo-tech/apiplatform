@@ -6,10 +6,12 @@
 # overlay 会自动把三个 Sentinel 地址注入 backend；跨主机部署时再通过
 # REDIS_SENTINEL_NODES 覆盖这些服务名。
 #
-# master 复制/连接口令使用主 compose 的 REDIS_PASSWORD；Sentinel API
-# 可另用 REDIS_SENTINEL_PASSWORD 保护。两者均不在源码中预置。
+# master 复制/连接口令使用主 compose 的 REDIS_PASSWORD；Sentinel API 必须
+# 使用独立的 REDIS_SENTINEL_PASSWORD 保护。两者均不在源码中预置。
 #
-# 拓扑：redis(master) + redis-replica + sentinel×3（quorum=2）。
+# 拓扑：两个 Redis 数据节点 + sentinel×3（quorum=2）。首次空卷启动时 redis
+# 是 master；故障转移后两个节点在重启时依据持久 Sentinel 的 2/3 多数恢复角色，
+# 不会无条件把 redis-replica 指回最初 master。
 # master 进程/容器故障后 sentinel 提升 replica，backend 经 master_for 自动
 # 跟随新 master；切换窗口内无法安全判定 RPM/TPM 时，中继关闭式返回 503
 # 与 `Retry-After: 5`，避免协调层故障变成无限流量。
@@ -26,63 +28,201 @@
 x-sentinel-common: &sentinel-common
   image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
   restart: unless-stopped
+  user: "999:1000"
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
   environment:
-    REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
+    REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+    REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+    # Concrete services override this anchor-only placeholder with their stable
+    # Compose DNS name; the entrypoint rejects any other value.
+    SENTINEL_ANNOUNCE_HOST: sentinel-host-must-be-overridden
   depends_on:
     redis:
-      condition: service_healthy
+      condition: service_started
     redis-replica:
       condition: service_started
   entrypoint: ["/bin/sh", "-c"]
   command:
     - |
-      cat >/tmp/sentinel.conf <<'EOF'
-      port 26379
-      sentinel monitor apiplatform-master redis 6379 2
-      sentinel down-after-milliseconds apiplatform-master 5000
-      sentinel failover-timeout apiplatform-master 15000
-      sentinel parallel-syncs apiplatform-master 1
-      sentinel resolve-hostnames yes
-      sentinel announce-hostnames yes
-      sentinel auth-pass apiplatform-master ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
-      EOF
-      if [ -n "$${REDIS_SENTINEL_PASSWORD:-}" ]; then
-        printf 'requirepass %s\n' "$${REDIS_SENTINEL_PASSWORD}" >>/tmp/sentinel.conf
+      case "$${REDIS_PASSWORD}" in
+        ''|*[!A-Za-z0-9_-]*) echo 'Sentinel requires an alphanumeric, underscore, or hyphen Redis password' >&2; exit 2 ;;
+      esac
+      case "$${REDIS_SENTINEL_PASSWORD}" in
+        ''|*[!A-Za-z0-9_-]*) echo 'Sentinel API password must be non-empty and contain only letters, digits, underscore, or hyphen' >&2; exit 2 ;;
+      esac
+      if [ "$${REDIS_PASSWORD}" = "$${REDIS_SENTINEL_PASSWORD}" ]; then
+        echo 'Redis data-plane and Sentinel management passwords must be independent' >&2
+        exit 2
       fi
-      exec redis-sentinel /tmp/sentinel.conf
+      case "$${SENTINEL_ANNOUNCE_HOST}" in
+        redis-sentinel-1|redis-sentinel-2|redis-sentinel-3) ;;
+        *) echo 'invalid Sentinel announce hostname' >&2; exit 2 ;;
+      esac
+      config=/data/sentinel.conf
+      if [ ! -s "$$config" ]; then
+        cat >"$$config" <<EOF
+        port 26379
+        sentinel monitor apiplatform-master redis 6379 2
+        sentinel down-after-milliseconds apiplatform-master 5000
+        sentinel failover-timeout apiplatform-master 15000
+        sentinel parallel-syncs apiplatform-master 1
+        sentinel resolve-hostnames yes
+        sentinel announce-hostnames yes
+        sentinel announce-ip $${SENTINEL_ANNOUNCE_HOST}
+        sentinel announce-port 26379
+        sentinel auth-pass apiplatform-master $${REDIS_PASSWORD}
+        sentinel deny-scripts-reconfig yes
+      EOF
+      fi
+      if grep -q '^sentinel auth-pass apiplatform-master ' "$$config"; then
+        sed -i "s#^sentinel auth-pass apiplatform-master .*#sentinel auth-pass apiplatform-master $${REDIS_PASSWORD}#" "$$config"
+      else
+        printf 'sentinel auth-pass apiplatform-master %s\n' "$${REDIS_PASSWORD}" >>"$$config"
+      fi
+      if grep -q '^requirepass ' "$$config"; then
+        sed -i "s#^requirepass .*#requirepass $${REDIS_SENTINEL_PASSWORD}#" "$$config"
+      else
+        printf 'requirepass %s\n' "$${REDIS_SENTINEL_PASSWORD}" >>"$$config"
+      fi
+      if grep -q '^sentinel announce-ip ' "$$config"; then
+        sed -i "s#^sentinel announce-ip .*#sentinel announce-ip $${SENTINEL_ANNOUNCE_HOST}#" "$$config"
+      else
+        printf 'sentinel announce-ip %s\n' "$${SENTINEL_ANNOUNCE_HOST}" >>"$$config"
+      fi
+      sed -i '/^sentinel known-sentinel apiplatform-master /d' "$$config"
+      chmod 0600 "$$config"
+      exec redis-sentinel "$$config"
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - >-
+        REDISCLI_AUTH="$${REDIS_SENTINEL_PASSWORD}" redis-cli --raw -p 26379
+        SENTINEL CKQUORUM apiplatform-master | grep -q '^OK'
+    interval: 5s
+    timeout: 3s
+    retries: 12
+    start_period: 10s
 
 services:
   backend:
     environment:
       REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
       REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
-      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
       REDIS_DB: ${REDIS_DB:-0}
+    depends_on:
+      redis-sentinel-quorum:
+        condition: service_completed_successfully
+
+  redis:
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_NODE_NAME: redis
+    volumes:
+      - ./scripts/redis-sentinel-bootstrap.sh:/usr/local/bin/redis-sentinel-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-sentinel-bootstrap.sh"]
+    command: []
 
   redis-replica:
     image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
-    # 与主库同一口令：masterauth 用于同步，requirepass 保证故障切换后
-    # 新 master 口令一致（backend 内置连接串带同一密码）。
-    command:
-      - |
-        exec redis-server --replicaof redis 6379 --appendonly no \
-          --masterauth ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD} --requirepass ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
-    depends_on:
-      redis:
-        condition: service_healthy
+    user: "999:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_NODE_NAME: redis-replica
+    volumes:
+      - redisreplicadata:/data
+      - ./scripts/redis-sentinel-bootstrap.sh:/usr/local/bin/redis-sentinel-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-sentinel-bootstrap.sh"]
+    command: []
+    depends_on: {}
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD} ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --raw ping | grep -qx PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   redis-sentinel-1:
     <<: *sentinel-common
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      SENTINEL_ANNOUNCE_HOST: redis-sentinel-1
+    volumes:
+      - redissentinel1data:/data
 
   redis-sentinel-2:
     <<: *sentinel-common
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      SENTINEL_ANNOUNCE_HOST: redis-sentinel-2
+    volumes:
+      - redissentinel2data:/data
 
   redis-sentinel-3:
     <<: *sentinel-common
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      SENTINEL_ANNOUNCE_HOST: redis-sentinel-3
+    volumes:
+      - redissentinel3data:/data
+
+  redis-sentinel-quorum:
+    image: ${REDIS_IMAGE:-redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf}
+    restart: "no"
+    user: "999:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请设置随机 REDIS_PASSWORD}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?Sentinel overlay 必须设置独立的随机 REDIS_SENTINEL_PASSWORD}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-apiplatform-master}
+      REDIS_SENTINEL_BOOTSTRAP_MODE: gate
+    volumes:
+      - ./scripts/redis-sentinel-bootstrap.sh:/usr/local/bin/redis-sentinel-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-sentinel-bootstrap.sh"]
+    command: []
+    depends_on:
+      redis:
+        condition: service_started
+      redis-replica:
+        condition: service_started
+      redis-sentinel-1:
+        condition: service_started
+      redis-sentinel-2:
+        condition: service_started
+      redis-sentinel-3:
+        condition: service_started
+
+volumes:
+  redisreplicadata:
+  redissentinel1data:
+  redissentinel2data:
+  redissentinel3data:

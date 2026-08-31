@@ -3,6 +3,43 @@
 本文记录生产部署中会直接影响请求准入和首次管理员认领的安全默认值。更改这些
 开关前应完成风险评估、容量压测并保留变更记录。
 
+## 数据库与备份容器
+
+Compose 中的 PostgreSQL 以镜像内置 UID/GID `70:70` 直接启动，不经过 root
+入口或 `gosu` 降权；根文件系统只读、所有 Linux capabilities 均被删除，只有
+数据卷与有限 tmpfs 可写。备份边车使用独立 shell 入口，不调用 `gosu`，根文件
+系统同样只读，并且仅保留把快照分配给 backend 只读组所需的 `CAP_CHOWN`。
+
+上述边界同时是上游镜像限时漏洞例外的补偿控制。例外仅绑定一个固定
+RepoDigest，必须经独立复核、在发布证据中留存批准链接，并会在到期时自动阻断
+检查。详情见 [SEC-2026-001](security-exceptions/SEC-2026-001-postgres-runtime.md)。
+变更数据库用户、入口、镜像摘要、挂载权限或 capabilities 时，必须重新完成空卷
+初始化、备份、恢复和漏洞可达性复核。
+
+Redis 同样绕过镜像的 root 入口分支，直接以镜像内置 UID/GID `999:1000`
+启动；根文件系统只读、capabilities 全部删除并启用 `no-new-privileges`，只有
+持久化 `/data` 卷和有限 `/tmp` 可写。变更镜像 UID、AOF 参数或卷权限时，必须
+执行写入、AOF 重写、容器重建和数据读取演练。可选 Sentinel overlay 的 replica
+和三个 Sentinel 进程继承同一非 root/只读/零 capability 边界；replica 使用独立
+持久卷，Sentinel 仅在有限 tmpfs 与各自的状态卷中写入。三个 Sentinel 分别把
+选主状态与 configuration epoch 写入独立 `/data` 卷，避免全体进程重启后退回
+最初 master。两个 Redis 节点启动时不会采用固定角色，而是要求至少 2/3
+Sentinel 对 `(host, port, configuration epoch)` 连续三轮给出相同结论；无稳定多数
+时失败关闭。一次性 quorum gate 还会确认多数状态、Sentinel quorum 与真实 master
+角色后才允许 backend 冷启动。每个 Redis/Sentinel 都公告稳定的 Compose DNS 名，
+避免容器和网络重建后把旧 IP 写回持久配置。
+
+`REDIS_SENTINEL_PASSWORD` 在启用 overlay 时必须是独立非空高熵值，不能沿用
+`REDIS_PASSWORD`；空值会在 Compose 渲染期被拒绝。持久状态包含 Redis/Sentinel
+认证信息，卷权限限制为 Sentinel UID，且不得作为公开或未加密的诊断附件。为
+安全更新持久配置，overlay 只接受字母、数字、下划线和连字符组成的 Redis 与
+Sentinel 密码；README 推荐的十六进制随机值满足这一约束。
+
+两个 Redis 数据卷与三个 Sentinel 状态卷必须作为同一个恢复集保留。丢失一个
+Sentinel 状态卷可由其余 2/3 多数恢复；不得在保留任一 Redis 数据卷时同时删除或
+重新初始化三个 Sentinel 状态卷，因为此时无法安全区分首次部署与故障转移后的
+控制面丢失。完整控制面丢失必须按灾难恢复事件处理，而不是自动回退固定 master。
+
 ## 首次管理员认领
 
 生产环境必须设置独立的 `ADMIN_BOOTSTRAP_TOKEN`。使用密码学安全随机数生成至少
@@ -48,7 +85,11 @@ Redis 是中继准入的安全依赖：
 
 发布或目标环境验收可运行 `bash scripts/test-sentinel-failover.sh`。它使用唯一的
 临时 Compose project，主动停止该 project 的 Redis master，验证 replica 被提升
-且可写，最后删除演练卷；它不替代跨主机网络分区与机架故障演练。
+且可写，再等待 AOF 本地落盘、强制终止已晋升节点并验证重启后写入仍可读取，
+随后同时强制重启三个 Sentinel 并验证其仍保留新 master 与 quorum；接着在不删
+卷的前提下执行完整 `down`/`up` 以重建全部容器与网络，确认已确认写入、角色与
+quorum gate 均保持正确，并再删除一个 Sentinel 状态卷验证 2/3 恢复，最后删除
+演练卷。它不替代跨主机网络分区与机架故障演练。
 
 TPM 预扣覆盖 prompt 与最大输出：Chat/Completions/Anthropic 识别 `max_tokens`
 和 `max_completion_tokens`，Responses 识别 `max_output_tokens`，同时保守处理兼容

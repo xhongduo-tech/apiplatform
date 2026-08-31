@@ -1,0 +1,141 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "CVE-2026-14456",
+      "purls": [
+        "pkg:apk/alpine/libcrypto3@3.5.7-r0?arch=x86_64&distro=3.24.1",
+        "pkg:apk/alpine/libssl3@3.5.7-r0?arch=x86_64&distro=3.24.1",
+        "pkg:apk/alpine/libcrypto3@3.5.7-r0?arch=aarch64&distro=3.24.1",
+        "pkg:apk/alpine/libssl3@3.5.7-r0?arch=aarch64&distro=3.24.1"
+      ],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: PostgreSQL and pg_dump do not create an OpenSSL QUIC listener; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2025-61726",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2025-61729",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-25679",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-27145",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-32280",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-32281",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-32283",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-33811",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-33814",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-33818",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-39820",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-39821",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-39822",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-39836",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-42499",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-42504",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-56853",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-56858",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-56859",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-56860",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    },
+    {
+      "id": "CVE-2026-56862",
+      "paths": ["usr/local/bin/gosu"],
+      "expired_at": "2026-09-30T23:59:59Z",
+      "statement": "SEC-2026-001: gosu is outside both shipped execution paths; refresh the exact upstream image before this exception expires."
+    }
+  ]
+}

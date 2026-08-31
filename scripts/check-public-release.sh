@@ -31,6 +31,12 @@ for required in \
   docs/ASVS-5.0-L2.md \
   docs/RUNTIME_SECURITY.md \
   docs/SECURITY_EXCEPTION_TEMPLATE.md \
+  docs/security-exceptions/SEC-2026-001-postgres-runtime.md \
+  docs/security-exceptions/SEC-2026-002-grafana-runtime.md \
+  security/trivy/grafana-13.2.0-high.yaml \
+  security/trivy/postgres-16-alpine-critical.yaml \
+  security/trivy/postgres-16-alpine-high.yaml \
+  scripts/check-container-security-exceptions.py \
   .github/workflows/codeql.yml \
   .github/workflows/scorecard.yml \
   scripts/capture-release-evidence.sh \
@@ -43,6 +49,10 @@ for required in \
     failed=1
   fi
 done
+if ! python3 scripts/check-container-security-exceptions.py; then
+  echo "✗ 容器安全例外已过期、漂移或缺少补偿控制" >&2
+  failed=1
+fi
 if ! python3 - <<'PY'
 from pathlib import Path
 import re
