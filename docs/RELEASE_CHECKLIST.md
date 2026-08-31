@@ -61,7 +61,8 @@ deleted from the current checkout. Complete every item below for each release.
       full container/network recreation and one-state-volume-loss cases. The
       two Redis data volumes and three Sentinel state volumes are retained as
       one recovery set; all three Sentinel volumes are never reinitialized
-      while Redis data is retained.
+      while Redis data is retained. All seven topology addresses remain
+      distinct link-local IPv4 addresses inside the isolated Compose network.
 - [ ] RPO, RTO, rollback and configuration changes are documented.
 
 ## Quality

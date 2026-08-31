@@ -35,7 +35,9 @@
 **高可用（Redis Sentinel，可选）**：`docker-compose.sentinel.yml` overlay
 会把 Sentinel 节点、master、密码和 DB 配置实际注入 backend，网关经 Sentinel
 发现 master 并在故障切换后重连；切换窗口内的限流命令按 fail-closed 返回
-`503`。具体恢复时间必须在目标环境通过主动终止 master 的演练测量。
+`503`。该 overlay 使用隔离网络内的稳定 link-local 地址，仅覆盖单机进程/容器
+故障；跨主机部署需要单独的编排与可路由网络设计。具体恢复时间必须在目标环境
+通过主动终止 master 的演练测量。
 
 ## 并发档位：速率闸门 ≠ 容量承诺
 

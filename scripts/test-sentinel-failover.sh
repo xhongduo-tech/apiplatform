@@ -33,6 +33,14 @@ trap cleanup EXIT INT TERM
 export POSTGRES_PASSWORD="sentinel-drill-postgres-${project}"
 export REDIS_PASSWORD="sentinel-drill-redis-${project}"
 export REDIS_SENTINEL_PASSWORD="sentinel-drill-sentinel-${project}"
+export REDIS_SENTINEL_MASTER="sentinel-drill-master"
+export REDIS_SENTINEL_PRIMARY_ADDRESS="169.254.240.10"
+export REDIS_SENTINEL_REPLICA_ADDRESS="169.254.240.11"
+export REDIS_SENTINEL_1_ADDRESS="169.254.240.21"
+export REDIS_SENTINEL_2_ADDRESS="169.254.240.22"
+export REDIS_SENTINEL_3_ADDRESS="169.254.240.23"
+export REDIS_SENTINEL_BACKEND_ADDRESS="169.254.240.30"
+export REDIS_SENTINEL_GATE_ADDRESS="169.254.240.31"
 export JWT_SECRET="sentinel-drill-jwt-secret-at-least-32-characters-${project}"
 export DATA_ENCRYPTION_KEY="AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
 export ADMIN_BOOTSTRAP_TOKEN="sentinel-drill-bootstrap-token-at-least-32-random-bytes-${project}"
@@ -40,17 +48,22 @@ export ADMIN_BOOTSTRAP_TOKEN="sentinel-drill-bootstrap-token-at-least-32-random-
 "${compose[@]}" up -d \
   redis redis-replica redis-sentinel-1 redis-sentinel-2 redis-sentinel-3
 
+redis_ip="${REDIS_SENTINEL_PRIMARY_ADDRESS}"
+replica_ip="${REDIS_SENTINEL_REPLICA_ADDRESS}"
+
 sentinel_master_host() {
   "${compose[@]}" exec -T redis-sentinel-1 sh -c \
-    'REDISCLI_AUTH="$REDIS_SENTINEL_PASSWORD" redis-cli --raw -p 26379 SENTINEL get-master-addr-by-name apiplatform-master' \
+    'REDISCLI_AUTH="$REDIS_SENTINEL_PASSWORD" redis-cli --raw -p 26379 SENTINEL get-master-addr-by-name "$REDIS_SENTINEL_MASTER"' \
     | sed -n '1p' | tr -d '\r'
 }
 
 for _ in $(seq 1 20); do
-  [[ "$(sentinel_master_host 2>/dev/null || true)" == "redis" ]] && break
+  initial_master="$(sentinel_master_host 2>/dev/null || true)"
+  [[ "${initial_master}" == "redis" || "${initial_master}" == "${redis_ip}" ]] && break
   sleep 1
 done
-[[ "$(sentinel_master_host)" == "redis" ]] || {
+initial_master="$(sentinel_master_host)"
+[[ "${initial_master}" == "redis" || "${initial_master}" == "${redis_ip}" ]] || {
   echo "Sentinel did not discover the initial redis master" >&2
   exit 1
 }
@@ -70,21 +83,24 @@ done
   "${compose[@]}" logs --no-color --tail=80 redis redis-replica >&2 || true
   exit 1
 }
-replica_ip="$("${compose[@]}" exec -T redis-replica hostname -i | awk '{print $1}' | tr -d '\r')"
 
 # Replication being online is necessary but not sufficient: Sentinel must have
 # observed and registered the replica before a failover can select it.
 sentinel_replica_host() {
   "${compose[@]}" exec -T redis-sentinel-1 sh -c \
-    'REDISCLI_AUTH="$REDIS_SENTINEL_PASSWORD" redis-cli --raw -p 26379 SENTINEL replicas apiplatform-master' \
+    'REDISCLI_AUTH="$REDIS_SENTINEL_PASSWORD" redis-cli --raw -p 26379 SENTINEL replicas "$REDIS_SENTINEL_MASTER"' \
     | awk 'previous == "ip" { print; exit } { previous = $0 }' \
     | tr -d '\r'
 }
 for _ in $(seq 1 30); do
-  [[ "$(sentinel_replica_host 2>/dev/null || true)" == "redis-replica" ]] && break
+  registered_replica="$(sentinel_replica_host 2>/dev/null || true)"
+  [[ "${registered_replica}" == "redis-replica" \
+      || "${registered_replica}" == "${replica_ip}" ]] && break
   sleep 1
 done
-[[ "$(sentinel_replica_host)" == "redis-replica" ]] || {
+registered_replica="$(sentinel_replica_host)"
+[[ "${registered_replica}" == "redis-replica" \
+    || "${registered_replica}" == "${replica_ip}" ]] || {
   echo "Sentinel never registered the synchronized Redis replica" >&2
   "${compose[@]}" logs --no-color --tail=80 \
     redis redis-replica redis-sentinel-1 redis-sentinel-2 redis-sentinel-3 >&2 || true
@@ -106,6 +122,25 @@ done
     redis-replica redis-sentinel-1 redis-sentinel-2 redis-sentinel-3 >&2 || true
   exit 1
 }
+
+# The reconfiguration hook must persist a stable node identity in every
+# Sentinel state volume. The network IP is intentionally not a recovery key.
+for sentinel_service in redis-sentinel-1 redis-sentinel-2 redis-sentinel-3; do
+  persisted_identity=""
+  for _ in $(seq 1 20); do
+    persisted_identity="$(
+      "${compose[@]}" exec -T "${sentinel_service}" \
+        sh -c 'sed -n "1p" /data/master-identity' 2>/dev/null \
+        | tr -d '\r' || true
+    )"
+    [[ "${persisted_identity}" == "redis-replica" ]] && break
+    sleep 1
+  done
+  [[ "${persisted_identity}" == "redis-replica" ]] || {
+    echo "${sentinel_service} did not persist the promoted master identity" >&2
+    exit 1
+  }
+done
 
 "${compose[@]}" exec -T redis-replica sh -c \
   'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw SET sentinel-drill-writable ok' \
@@ -228,7 +263,7 @@ quorum_status=""
 for _ in $(seq 1 30); do
   quorum_status="$(
     "${compose[@]}" exec -T redis-sentinel-1 \
-      sh -c 'REDISCLI_AUTH="$REDIS_SENTINEL_PASSWORD" redis-cli --raw -p 26379 SENTINEL CKQUORUM apiplatform-master' \
+      sh -c 'REDISCLI_AUTH="$REDIS_SENTINEL_PASSWORD" redis-cli --raw -p 26379 SENTINEL CKQUORUM "$REDIS_SENTINEL_MASTER"' \
       2>/dev/null | tr -d '\r' || true
   )"
   [[ "${quorum_status}" == OK* ]] && break
@@ -252,10 +287,12 @@ done
 master_after_full_restart=""
 for _ in $(seq 1 60); do
   master_after_full_restart="$(sentinel_master_host 2>/dev/null || true)"
-  [[ "${master_after_full_restart}" == "redis-replica" ]] && break
+  [[ "${master_after_full_restart}" == "redis-replica" \
+      || "${master_after_full_restart}" == "${replica_ip}" ]] && break
   sleep 1
 done
-[[ "${master_after_full_restart}" == "redis-replica" ]] || {
+[[ "${master_after_full_restart}" == "redis-replica" \
+    || "${master_after_full_restart}" == "${replica_ip}" ]] || {
   echo "full topology restart did not retain redis-replica as master" >&2
   "${compose[@]}" logs --no-color --tail=120 \
     redis redis-replica redis-sentinel-1 redis-sentinel-2 redis-sentinel-3 >&2 || true
@@ -328,10 +365,12 @@ docker volume rm "${sentinel1_volume}" >/dev/null
 master_after_single_state_loss=""
 for _ in $(seq 1 60); do
   master_after_single_state_loss="$(sentinel_master_host 2>/dev/null || true)"
-  [[ "${master_after_single_state_loss}" == "redis-replica" ]] && break
+  [[ "${master_after_single_state_loss}" == "redis-replica" \
+      || "${master_after_single_state_loss}" == "${replica_ip}" ]] && break
   sleep 1
 done
-[[ "${master_after_single_state_loss}" == "redis-replica" ]] || {
+[[ "${master_after_single_state_loss}" == "redis-replica" \
+    || "${master_after_single_state_loss}" == "${replica_ip}" ]] || {
   echo "2/3 persisted Sentinel voters did not recover the promoted master" >&2
   exit 1
 }

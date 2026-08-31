@@ -128,6 +128,9 @@ def test_sentinel_overlay_actually_switches_backend_to_sentinel_discovery():
     assert backend_dependencies["redis-sentinel-quorum"]["condition"] == (
         "service_completed_successfully"
     )
+    assert rendered["services"]["backend"]["networks"]["default"][
+        "link_local_ips"
+    ] == ["169.254.240.30"]
 
     redis = rendered["services"]["redis"]
     assert redis["entrypoint"] == [
@@ -135,6 +138,10 @@ def test_sentinel_overlay_actually_switches_backend_to_sentinel_discovery():
         "/usr/local/bin/redis-sentinel-bootstrap.sh",
     ]
     assert redis["environment"]["REDIS_NODE_NAME"] == "redis"
+    assert redis["environment"]["REDIS_SENTINEL_PRIMARY_ADDRESS"] == (
+        "169.254.240.10"
+    )
+    assert redis["networks"]["default"]["link_local_ips"] == ["169.254.240.10"]
     assert any(
         volume["target"] == "/usr/local/bin/redis-sentinel-bootstrap.sh"
         and volume["read_only"] is True
@@ -150,6 +157,12 @@ def test_sentinel_overlay_actually_switches_backend_to_sentinel_discovery():
         "/usr/local/bin/redis-sentinel-bootstrap.sh",
     ]
     assert replica["environment"]["REDIS_NODE_NAME"] == "redis-replica"
+    assert replica["environment"]["REDIS_SENTINEL_REPLICA_ADDRESS"] == (
+        "169.254.240.11"
+    )
+    assert replica["networks"]["default"]["link_local_ips"] == [
+        "169.254.240.11"
+    ]
     assert any(
         volume["source"] == "redisreplicadata" and volume["target"] == "/data"
         for volume in replica["volumes"]
@@ -160,14 +173,19 @@ def test_sentinel_overlay_actually_switches_backend_to_sentinel_discovery():
         sentinel = rendered["services"][service_name]
         _assert_restricted(sentinel, tmpfs="/tmp:size=16m,mode=1777")
         assert sentinel["user"] == "999:1000"
-        assert sentinel["volumes"] == [
-            {
-                "type": "volume",
-                "source": f"redissentinel{index}data",
-                "target": "/data",
-                "volume": {},
-            }
-        ]
+        assert any(
+            volume["type"] == "volume"
+            and volume["source"] == f"redissentinel{index}data"
+            and volume["target"] == "/data"
+            for volume in sentinel["volumes"]
+        )
+        assert any(
+            volume["type"] == "bind"
+            and volume["target"]
+            == "/usr/local/bin/redis-sentinel-reconfig.sh"
+            and volume["read_only"] is True
+            for volume in sentinel["volumes"]
+        )
         sentinel_command = "\n".join(sentinel["command"])
         assert "config=/data/sentinel.conf" in sentinel_command
         assert "if [ ! -s \"$$config\" ]" in sentinel_command
@@ -175,11 +193,29 @@ def test_sentinel_overlay_actually_switches_backend_to_sentinel_discovery():
         assert sentinel["environment"]["REDIS_SENTINEL_PASSWORD"] == (
             "compose-test-sentinel-password"
         )
-        assert sentinel["environment"]["SENTINEL_ANNOUNCE_HOST"] == service_name
+        sentinel_address = f"169.254.240.{20 + index}"
+        assert sentinel["environment"]["SENTINEL_ANNOUNCE_ADDRESS"] == (
+            sentinel_address
+        )
+        assert sentinel["networks"]["default"]["link_local_ips"] == [
+            sentinel_address
+        ]
         assert "requirepass %s" in "\n".join(sentinel["command"])
         sentinel_command = "\n".join(sentinel["command"])
-        assert "sentinel announce-ip $${SENTINEL_ANNOUNCE_HOST}" in sentinel_command
-        assert "known-sentinel apiplatform-master" in sentinel_command
+        assert "sentinel resolve-hostnames no" in sentinel_command
+        assert "sentinel announce-hostnames no" in sentinel_command
+        assert "sentinel announce-ip $$sentinel_ip" in sentinel_command
+        assert (
+            "sentinel monitor $${REDIS_SENTINEL_MASTER} $$master_ip 6379 2"
+            in sentinel_command
+        )
+        assert (
+            "sentinel client-reconfig-script $${REDIS_SENTINEL_MASTER} "
+            "/usr/local/bin/redis-sentinel-reconfig.sh"
+        ) in sentinel_command
+        assert "identity_file=/data/master-identity" in sentinel_command
+        assert "known-sentinel $${REDIS_SENTINEL_MASTER}" in sentinel_command
+        assert "known-replica $${REDIS_SENTINEL_MASTER}" in sentinel_command
         assert "passwords must be independent" in sentinel_command
 
     gate = rendered["services"]["redis-sentinel-quorum"]
@@ -187,6 +223,7 @@ def test_sentinel_overlay_actually_switches_backend_to_sentinel_discovery():
     assert gate["user"] == "999:1000"
     assert gate["restart"] == "no"
     assert gate["environment"]["REDIS_SENTINEL_BOOTSTRAP_MODE"] == "gate"
+    assert gate["networks"]["default"]["link_local_ips"] == ["169.254.240.31"]
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker compose unavailable")

@@ -26,8 +26,13 @@ Redis 同样绕过镜像的 root 入口分支，直接以镜像内置 UID/GID `9
 最初 master。两个 Redis 节点启动时不会采用固定角色，而是要求至少 2/3
 Sentinel 对 `(host, port, configuration epoch)` 连续三轮给出相同结论；无稳定多数
 时失败关闭。一次性 quorum gate 还会确认多数状态、Sentinel quorum 与真实 master
-角色后才允许 backend 冷启动。每个 Redis/Sentinel 都公告稳定的 Compose DNS 名，
-避免容器和网络重建后把旧 IP 写回持久配置。
+角色后才允许 backend 冷启动。两个 Redis、三个 Sentinel、backend 与 quorum gate
+在隔离 Compose 网络中各自使用唯一的 `169.254.0.0/16` link-local 地址；Sentinel
+只公告并监控这些稳定地址，不依赖故障容器会从中消失的 Docker DNS，也不依赖重启
+后可能重分配的普通 bridge IP。故障转移回调会把新 master 的稳定节点身份原子写入
+每个 Sentinel 状态卷；容器或网络重建时再把该身份绑定到固定 link-local 地址。
+地址可通过 `.env` 中七个 `REDIS_SENTINEL_*_ADDRESS` 变量整体覆盖，但必须保持
+link-local、互不相同，并在首次部署前确定。
 
 `REDIS_SENTINEL_PASSWORD` 在启用 overlay 时必须是独立非空高熵值，不能沿用
 `REDIS_PASSWORD`；空值会在 Compose 渲染期被拒绝。持久状态包含 Redis/Sentinel
@@ -86,7 +91,8 @@ Redis 是中继准入的安全依赖：
 发布或目标环境验收可运行 `bash scripts/test-sentinel-failover.sh`。它使用唯一的
 临时 Compose project，主动停止该 project 的 Redis master，验证 replica 被提升
 且可写，再等待 AOF 本地落盘、强制终止已晋升节点并验证重启后写入仍可读取，
-随后同时强制重启三个 Sentinel 并验证其仍保留新 master 与 quorum；接着在不删
+同时确认三个 Sentinel 状态卷均记录新 master 的稳定身份；随后同时强制重启三个
+Sentinel 并验证其仍保留新 master 与 quorum；接着在不删
 卷的前提下执行完整 `down`/`up` 以重建全部容器与网络，确认已确认写入、角色与
 quorum gate 均保持正确，并再删除一个 Sentinel 状态卷验证 2/3 恢复，最后删除
 演练卷。它不替代跨主机网络分区与机架故障演练。

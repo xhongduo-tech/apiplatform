@@ -269,15 +269,28 @@ bash scripts/test-sentinel-failover.sh
 The overlay refuses an empty Sentinel management password. It persists both
 Redis AOF volumes and all three Sentinel election-state volumes, derives each
 Redis node's role from a stable 2-of-3 Sentinel majority at startup, and gates
-backend startup until that majority points to a reachable master. Treat the
-two Redis data volumes and three Sentinel state volumes as one recovery set:
-never recreate all three Sentinel volumes while retaining either Redis data
-volume. One lost Sentinel state volume is tolerated and covered by the drill;
-losing the complete control-plane state is a restore event, not a fresh boot.
-The volumes contain authentication material and must not be published as
-diagnostic artifacts. This single-host overlay handles process/container
-failure; host, rack, or zone failure requires placing the replica and a quorum
-across independent failure domains.
+backend startup until that majority points to a reachable master. Redis and
+Sentinel use unique `169.254.0.0/16` link-local addresses inside the isolated
+Compose network: this keeps the monitored address stable when a stopped
+container disappears from Docker DNS or ordinary bridge addresses are
+reassigned. The defaults are recorded in `.env.example`; if they conflict with
+another service on the same Compose network, replace all seven address values
+as one distinct link-local set before first deployment.
+
+Treat the two Redis data volumes and three Sentinel state volumes as one
+recovery set: never recreate all three Sentinel volumes while retaining either
+Redis data volume. One lost Sentinel state volume is tolerated and covered by
+the drill; losing the complete control-plane state is a restore event, not a
+fresh boot. The volumes contain authentication material and must not be
+published as diagnostic artifacts. This single-host overlay handles
+process/container failure. Host, rack, or zone failure requires a separate
+multi-host orchestration and networking design with stable routable addresses;
+this link-local Compose overlay must not be copied across hosts unchanged.
+
+The sealed `offline-images/` bundle intentionally deploys the single-Redis
+baseline and does not include this optional overlay. Use the version-matched
+source checkout for Sentinel, or produce a separately reviewed and checksummed
+offline HA bundle; do not add unverified files to a sealed offline package.
 
 The versioned local defaults in `docker-compose.app.yml` support source builds;
 they are not an authenticity boundary for prebuilt artifacts. For an official

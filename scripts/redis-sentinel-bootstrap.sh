@@ -12,6 +12,8 @@ sentinel_password="${REDIS_SENTINEL_PASSWORD:?REDIS_SENTINEL_PASSWORD is require
 sentinel_nodes="${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}"
 master_name="${REDIS_SENTINEL_MASTER:-apiplatform-master}"
 timeout_s="${REDIS_SENTINEL_BOOTSTRAP_TIMEOUT_S:-90}"
+redis_address="${REDIS_SENTINEL_PRIMARY_ADDRESS:-169.254.240.10}"
+redis_replica_address="${REDIS_SENTINEL_REPLICA_ADDRESS:-169.254.240.11}"
 
 case "${redis_password}" in
   *[!A-Za-z0-9_-]*)
@@ -45,6 +47,58 @@ if [ "${timeout_s}" -lt 10 ] || [ "${timeout_s}" -gt 600 ]; then
   echo "REDIS_SENTINEL_BOOTSTRAP_TIMEOUT_S must be between 10 and 600" >&2
   exit 2
 fi
+
+# Docker can assign a different ordinary bridge address after a stopped
+# container restarts. Each Redis node therefore has an isolated, stable
+# link-local address in addition to its dynamic service address. Sentinel uses
+# only these link-local addresses, which remain valid when Docker DNS removes a
+# stopped service and across container/network recreation.
+validate_link_local_ipv4() {
+  printf '%s\n' "$1" | awk -F. '
+    NR != 1 || NF != 4 { invalid = 1 }
+    {
+      for (i = 1; i <= 4; i++) {
+        if ($i !~ /^[0-9]+$/ || $i + 0 > 255) invalid = 1
+      }
+      if ($1 + 0 != 169 || $2 + 0 != 254) invalid = 1
+    }
+    END { exit invalid ? 1 : 0 }
+  '
+}
+validate_link_local_ipv4 "${redis_address}" || {
+  echo "REDIS_SENTINEL_PRIMARY_ADDRESS must be a link-local IPv4 address" >&2
+  exit 2
+}
+validate_link_local_ipv4 "${redis_replica_address}" || {
+  echo "REDIS_SENTINEL_REPLICA_ADDRESS must be a link-local IPv4 address" >&2
+  exit 2
+}
+if [ "${redis_address}" = "${redis_replica_address}" ]; then
+  echo "Redis nodes must use distinct Sentinel addresses" >&2
+  exit 2
+fi
+
+normalize_node_identity() {
+  observed="$1"
+  if [ "${observed}" = "redis" ] || [ "${observed}" = "${redis_address}" ]; then
+    printf '%s\n' redis
+    return 0
+  fi
+  if [ "${observed}" = "redis-replica" ] \
+    || [ "${observed}" = "${redis_replica_address}" ]; then
+    printf '%s\n' redis-replica
+    return 0
+  fi
+  return 1
+}
+
+node_address() {
+  case "$1" in
+    redis) printf '%s\n' "${redis_address}" ;;
+    redis-replica) printf '%s\n' "${redis_replica_address}" ;;
+    *) return 1 ;;
+  esac
+}
 
 response_file="$(mktemp /tmp/sentinel-responses.XXXXXX)"
 trap 'rm -f "${response_file}"' EXIT INT TERM
@@ -92,16 +146,14 @@ query_sentinel() {
   remainder="${remainder#*|}"
   reported_epoch="${remainder%%|*}"
   reported_flags="${remainder#*|}"
-  case "${reported_host}" in
-    redis|redis-replica) ;;
-    *) return 1 ;;
-  esac
+  normalized_host="$(normalize_node_identity "${reported_host}" || true)"
+  [ -n "${normalized_host}" ] || return 1
   [ "${reported_port}" = "6379" ] || return 1
   case "${reported_epoch}" in
     ''|*[!0-9]*) return 1 ;;
   esac
   printf '%s|%s|%s|%s\n' \
-    "${reported_host}" "${reported_port}" "${reported_epoch}" "${reported_flags}"
+    "${normalized_host}" "${reported_port}" "${reported_epoch}" "${reported_flags}"
 }
 
 majority_snapshot() {
@@ -202,9 +254,10 @@ if [ "${mode}" = "gate" ]; then
     fi
     if [ "${current}" = "${selected}" ] && sentinel_quorum_ready "${selected}"; then
       selected_host="${selected%%|*}"
+      selected_address="$(node_address "${selected_host}")"
       master_role="$(
         REDISCLI_AUTH="${redis_password}" redis-cli --raw \
-          -t 1 -h "${selected_host}" -p 6379 \
+          -t 1 -h "${selected_address}" -p 6379 \
           INFO replication 2>/dev/null \
           | awk -F: '/^role:/{gsub("\\r", "", $2); print $2}'
       )"
@@ -235,6 +288,8 @@ selected="$(stable_majority || true)"
   exit 1
 }
 selected_host="${selected%%|*}"
+selected_address="$(node_address "${selected_host}")"
+current_address="$(node_address "${node_name}")"
 
 config=/tmp/redis-sentinel-node.conf
 umask 077
@@ -244,10 +299,10 @@ appendfsync everysec
 save 60 1
 masterauth ${redis_password}
 requirepass ${redis_password}
-replica-announce-ip ${node_name}
+replica-announce-ip ${current_address}
 replica-announce-port 6379
 EOF
 if [ "${selected_host}" != "${node_name}" ]; then
-  printf 'replicaof %s 6379\n' "${selected_host}" >>"${config}"
+  printf 'replicaof %s 6379\n' "${selected_address}" >>"${config}"
 fi
 exec redis-server "${config}"
