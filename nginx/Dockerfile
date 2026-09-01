@@ -11,7 +11,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ── Stage 2: nginx 运行时 ────────────────────────────────────────────────────
-FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:93722936b82ec8a1178d48448e619226680d2de3706a1640800e186cd5fa7fd3
+FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:45ce1e2e699234253d1def7baa96218a5d00b498d1ba0cbb1a17b6bdf73d1351
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 COPY nginx/security_headers.conf /etc/nginx/security_headers.conf
 COPY --chmod=755 nginx/20-real-ip.sh /docker-entrypoint.d/20-real-ip.sh
