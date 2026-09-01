@@ -1,12 +1,12 @@
 # Open API Platform 后端镜像（多阶段，依赖与运行分离）
 # ── Stage 1: 安装依赖到 /deps ────────────────────────────────────────────────
-FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7 AS deps
+FROM python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS deps
 WORKDIR /build
 COPY requirements.lock .
 RUN pip install --no-cache-dir --require-hashes --prefix=/deps -r requirements.lock
 
 # ── Stage 2: 运行时 ──────────────────────────────────────────────────────────
-FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
+FROM python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
