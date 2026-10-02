@@ -7,7 +7,7 @@ sqlalchemy==2.0.52
 psycopg[binary]==3.3.4
 alembic==1.19.1
 redis==8.1.0
-pyjwt==2.13.0
+pyjwt==2.15.0
 pydantic==2.13.4
 python-multipart==0.0.32
 prometheus_client==0.26.0
